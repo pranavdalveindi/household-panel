@@ -17,7 +17,7 @@ import {
 
 export type HouseholdRecord = {
   id: string;
-  questionnaire_n?: string | null;
+  questionnaire_n?: string | number | null;
   household_id?: string | null;
   respondent_name?: string | null;
   contact_number?: string | null;
@@ -133,16 +133,10 @@ function displayValue(value: unknown): string {
 }
 
 /**
- * Completion rules:
- * - A Call Status must be selected.
- * - A scheduled date is optional.
+ * A household is complete when its Call Status has been saved.
  *
- * Because appointment_status must remain unchanged, this component
- * does not use it to determine whether an appointment is scheduled.
- *
- * Note: this means saving a Call Status without a date completes the
- * row as well. A separate database field is needed if you want to
- * distinguish "not scheduled" from "not yet decided".
+ * Appointment Status is not modified by this component.
+ * Scheduled Date is optional.
  */
 function isHouseholdComplete(record: HouseholdRecord): boolean {
   return Boolean(record.call_status?.trim());
@@ -168,30 +162,51 @@ export function HouseholdTable({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Only Call Center users can edit call status and scheduled date.
+  // Only Call Center users can edit Call Status and Scheduled Date.
   const canEdit = userRole === "call_center";
   const isDataTeam = userRole === "data_team";
 
+  // Hide sensitive additional columns from the Data Team.
   const visibleAdditionalColumns = ALL_ADDITIONAL_COLUMNS.filter(
     (column) => !(isDataTeam && column.sensitive)
   );
 
+  // Synchronize the component with refreshed server-side records.
   useEffect(() => {
     setRecords(initialRecords);
     setDrafts(createDrafts(initialRecords));
   }, [initialRecords]);
 
+  /**
+   * Unlocking rules:
+   * 1. Only Call Center users can edit.
+   * 2. Previously completed households remain accessible.
+   * 3. The first household is always accessible.
+   * 4. A new household is accessible only when all preceding
+   *    households have a saved Call Status.
+   */
   function isUnlocked(index: number): boolean {
     if (!canEdit) {
       return false;
     }
 
-    // The first household is always available.
+    const currentRecord = records[index];
+
+    if (!currentRecord) {
+      return false;
+    }
+
+    // Allow previously completed households to be accessed again.
+    if (isHouseholdComplete(currentRecord)) {
+      return true;
+    }
+
+    // Always unlock the first household.
     if (index === 0) {
       return true;
     }
 
-    // Every preceding household must have a saved Call Status.
+    // New households require all preceding households to be complete.
     for (let i = 0; i < index; i++) {
       if (!isHouseholdComplete(records[i])) {
         return false;
@@ -252,19 +267,21 @@ export function HouseholdTable({
     setSavingId(record.id);
 
     try {
-      const response = await fetch(`/api/households/${record.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
+      const response = await fetch(
+        `/api/households/${record.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
 
-        // IMPORTANT:
-        // appointment_status is intentionally not included.
-        body: JSON.stringify({
-          call_status: draft.call_status,
-          scheduled_date: draft.scheduled_date || null,
-        }),
-      });
+          // Appointment Status is intentionally not modified.
+          body: JSON.stringify({
+            call_status: draft.call_status,
+            scheduled_date: draft.scheduled_date || null,
+          }),
+        }
+      );
 
       const result = await response.json();
 
@@ -274,8 +291,7 @@ export function HouseholdTable({
         );
       }
 
-      // Use the returned record where available.
-      // Preserve appointment_status exactly as it was in the database.
+      // Preserve the existing Appointment Status.
       const savedRecord: HouseholdRecord = {
         ...record,
         ...(result.household ?? {}),
@@ -306,9 +322,10 @@ export function HouseholdTable({
 
       const nextRow = index + 1;
 
+      // Inform the user when another household exists on this page.
       const nextUnlockedNote =
         nextRow < records.length
-          ? ` Household #${startIndex + nextRow + 1} is now unlocked.`
+          ? ` Household #${startIndex + nextRow + 1} may now be unlocked if all preceding households are complete.`
           : "";
 
       setSuccessMsg(
@@ -392,49 +409,63 @@ export function HouseholdTable({
         </div>
       )}
 
-      {/* Table */}
+      {/* Household Table */}
       <div className="max-w-full overflow-x-auto rounded-md border bg-card">
         <table className="w-max min-w-full text-sm">
           <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
             <tr className="border-b">
+              {/* Serial Number */}
               <th className="px-3 py-3 text-center font-medium">
-                #
+                S. No.
               </th>
 
-              <th className="px-4 py-3 text-left font-medium">
+              {/* NEW: Questionnaire Number Column */}
+              <th className="whitespace-nowrap px-4 py-3 text-left font-medium">
+                Questionnaire #
+              </th>
+
+              {/* Household ID Column */}
+              <th className="whitespace-nowrap px-4 py-3 text-left font-medium">
                 Household ID
               </th>
 
+              {/* Respondent Name */}
               {!isDataTeam && (
-                <th className="px-4 py-3 text-left font-medium">
+                <th className="whitespace-nowrap px-4 py-3 text-left font-medium">
                   Respondent Name
                 </th>
               )}
 
+              {/* Contact */}
               {!isDataTeam && (
-                <th className="px-4 py-3 text-left font-medium">
+                <th className="whitespace-nowrap px-4 py-3 text-left font-medium">
                   Contact
                 </th>
               )}
 
+              {/* Call Status */}
               <th className="min-w-40 px-4 py-3 text-left font-semibold text-primary">
                 Call Status
               </th>
 
+              {/* Appointment Status */}
               <th className="min-w-48 px-4 py-3 text-left font-semibold text-primary">
                 Appointment Status
               </th>
 
+              {/* Scheduled Date */}
               <th className="min-w-48 px-4 py-3 text-left font-semibold text-primary">
                 Scheduled Date
               </th>
 
+              {/* Action */}
               {canEdit && (
                 <th className="px-4 py-3 text-center font-medium">
                   Action
                 </th>
               )}
 
+              {/* Additional Columns */}
               {visibleAdditionalColumns.map((column) => (
                 <th
                   key={column.key}
@@ -465,7 +496,7 @@ export function HouseholdTable({
                         : "hover:bg-muted/30"
                   }`}
                 >
-                  {/* Serial Number */}
+                  {/* Serial Number and Status Icon */}
                   <td className="px-3 py-3 text-center align-top font-mono text-xs">
                     <div className="flex flex-col items-center gap-1">
                       <span className="font-semibold text-muted-foreground">
@@ -497,17 +528,18 @@ export function HouseholdTable({
                     </div>
                   </td>
 
-                  {/* Household ID and Questionnaire Number */}
+                  {/* NEW: Questionnaire Number */}
                   <td className="whitespace-nowrap px-4 py-3 align-top">
-                    <div className="font-mono text-xs text-foreground">
-                      {displayValue(record.household_id)}
-                    </div>
+                    <span className="font-mono text-xs text-foreground">
+                      {displayValue(record.questionnaire_n)}
+                    </span>
+                  </td>
 
-                    {record.questionnaire_n && (
-                      <div className="mt-1 text-[11px] text-muted-foreground">
-                        Q#: {record.questionnaire_n}
-                      </div>
-                    )}
+                  {/* Household ID - No Questionnaire Number Here */}
+                  <td className="whitespace-nowrap px-4 py-3 align-top">
+                    <span className="font-mono text-xs text-foreground">
+                      {displayValue(record.household_id)}
+                    </span>
                   </td>
 
                   {/* Respondent Name */}
@@ -594,14 +626,14 @@ export function HouseholdTable({
                     )}
                   </td>
 
-                  {/* Appointment Status: display the original database value */}
+                  {/* Appointment Status: Read-Only */}
                   <td className="px-4 py-3 align-top">
                     <span className="inline-block rounded border px-2 py-0.5 text-xs font-medium">
                       {displayValue(record.appointment_status)}
                     </span>
                   </td>
 
-                  {/* Scheduled Date: scheduling is handled in this column */}
+                  {/* Scheduled Date */}
                   <td className="px-4 py-3 align-top">
                     {canEdit ? (
                       <div className="min-w-44 space-y-2">

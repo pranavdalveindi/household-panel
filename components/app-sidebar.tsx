@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   LayoutDashboard,
@@ -57,6 +57,12 @@ export function AppSidebar({
   const [loggingOut, setLoggingOut] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
+  // Reset local UI state when the authenticated account changes.
+  useEffect(() => {
+    setLoggingOut(false);
+    setProfileOpen(false);
+  }, [userEmail]);
+
   const initials = userName
     .trim()
     .split(/\s+/)
@@ -76,15 +82,18 @@ export function AppSidebar({
 
       if (error) {
         console.error("Sign-out failed:", error.message);
-        setLoggingOut(false);
         return;
       }
 
       setProfileOpen(false);
+
+      // Navigate to login after a successful sign-out.
       router.replace("/login");
       router.refresh();
     } catch (error) {
       console.error("Unexpected sign-out error:", error);
+    } finally {
+      // Never leave the button permanently in its loading state.
       setLoggingOut(false);
     }
   }
