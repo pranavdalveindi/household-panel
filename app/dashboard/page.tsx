@@ -93,35 +93,28 @@ export default async function DashboardPage({
     householdResult,
     respondentResult,
     appointmentResult,
-    recordsResult,
   ] = await Promise.all([
-    // Records with a household ID.
+    // Fetch only the current page's records.
     supabase
       .from("tv_measurement_households")
-      .select("id", { count: "exact", head: true })
-      .not("household_id", "is", null)
-      .neq("household_id", ""),
+      .select("*")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(startIndex, endIndex),
 
-    // Records with a respondent name.
+    // Count records with a respondent name.
     supabase
       .from("tv_measurement_households")
       .select("id", { count: "exact", head: true })
       .not("respondent_name", "is", null)
       .neq("respondent_name", ""),
 
-    // Records with an appointment status.
+    // Count records with an appointment status.
     supabase
       .from("tv_measurement_households")
       .select("id", { count: "exact", head: true })
       .not("appointment_status", "is", null)
       .neq("appointment_status", ""),
-
-    // Fetch only 25 records for the current page.
-    supabase
-      .from("tv_measurement_households")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .range(startIndex, endIndex),
   ]);
 
   // Detect query errors.
@@ -129,8 +122,7 @@ export default async function DashboardPage({
     totalResult.error ||
     householdResult.error ||
     respondentResult.error ||
-    appointmentResult.error ||
-    recordsResult.error;
+    appointmentResult.error;
 
   // Get user role for role-based column visibility & permissions
   const {
@@ -156,7 +148,7 @@ export default async function DashboardPage({
 
   // Only the current page's records are stored here.
   // If user belongs to data_team, strip sensitive PII before sending to client.
-  const rawRecords = recordsResult.data ?? [];
+  const rawRecords = householdResult.data ?? [];
   const records = rawRecords.map((r) => {
     if (isDataTeam) {
       return {
