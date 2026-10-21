@@ -48,14 +48,15 @@ export default async function DashboardLayout({
     user.user_metadata?.name ||
     email.split("@")[0];
 
-  // Check whether the user is an administrator
+  // Check whether the user is an administrator and get their role
   const { data: roleRecord } = await supabase
     .from("user_roles")
     .select("role")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  const isAdmin = roleRecord?.role === "admin";
+  const userRole = roleRecord?.role ?? null;
+  const isAdmin = userRole === "admin";
 
   return (
     <SidebarProvider>
@@ -63,6 +64,7 @@ export default async function DashboardLayout({
         userEmail={email}
         userName={userName}
         isAdmin={isAdmin}
+        userRole={userRole}
       />
 
       <SidebarInset>

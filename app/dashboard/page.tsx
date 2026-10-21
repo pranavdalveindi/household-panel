@@ -10,11 +10,11 @@ import {
 
 import {
   ClipboardList,
-  House,
-  UserRound,
   CalendarCheck,
   ChevronLeft,
   ChevronRight,
+  PhoneOff,
+  PhoneCall,
 } from "lucide-react";
 
 import { createClient } from "@/src/lib/supabase/server";
@@ -30,21 +30,21 @@ const overviewCards = [
     icon: ClipboardList,
   },
   {
-    key: "households",
-    title: "Household IDs",
-    description: "Records with a household ID",
-    icon: House,
+    key: "not_reachable",
+    title: "Not Reachable",
+    description: "Calls that could not be reached",
+    icon: PhoneOff,
   },
   {
-    key: "respondents",
-    title: "Respondents",
-    description: "Records with a respondent name",
-    icon: UserRound,
+    key: "call_successful",
+    title: "Call Successful",
+    description: "Calls connected successfully",
+    icon: PhoneCall,
   },
   {
-    key: "appointments",
-    title: "Appointment Status",
-    description: "Records with a recorded status",
+    key: "scheduled",
+    title: "Appointments Scheduled",
+    description: "Scheduled date and time set",
     icon: CalendarCheck,
   },
 ] as const;
@@ -96,9 +96,9 @@ export default async function DashboardPage({
   // Fetch the current page and all summary counts independently.
   const [
     householdResult,
-    householdIdResult,
-    respondentResult,
-    appointmentResult,
+    notReachableResult,
+    callSuccessfulResult,
+    scheduledResult,
   ] = await Promise.all([
     // Fetch only the records for the current page.
     supabase
@@ -108,36 +108,32 @@ export default async function DashboardPage({
       .order("id", { ascending: true })
       .range(startIndex, endIndex),
 
-    // Count all records with a household ID.
-    // This query covers the entire database, not just the current page.
+    // Count records where call is Not reachable
     supabase
       .from("tv_measurement_households")
       .select("id", { count: "exact", head: true })
-      .not("household_id", "is", null)
-      .neq("household_id", ""),
+      .ilike("call_status", "%Not reachable%"),
 
-    // Count all records with a respondent name.
+    // Count records where call was successful
     supabase
       .from("tv_measurement_households")
       .select("id", { count: "exact", head: true })
-      .not("respondent_name", "is", null)
-      .neq("respondent_name", ""),
+      .ilike("call_status", "%call successful%"),
 
-    // Count all records with an appointment status.
+    // Count records with a scheduled date
     supabase
       .from("tv_measurement_households")
       .select("id", { count: "exact", head: true })
-      .not("appointment_status", "is", null)
-      .neq("appointment_status", ""),
+      .not("scheduled_date", "is", null),
   ]);
 
   // Detect query errors.
   const queryError =
     totalResult.error ||
     householdResult.error ||
-    householdIdResult.error ||
-    respondentResult.error ||
-    appointmentResult.error;
+    notReachableResult.error ||
+    callSuccessfulResult.error ||
+    scheduledResult.error;
 
   // Get the authenticated user.
   const {
@@ -157,9 +153,9 @@ export default async function DashboardPage({
   // Summary cards use counts from the entire database.
   const counts = {
     total: totalResult.count,
-    households: householdIdResult.count,
-    respondents: respondentResult.count,
-    appointments: appointmentResult.count,
+    not_reachable: notReachableResult.count,
+    call_successful: callSuccessfulResult.count,
+    scheduled: scheduledResult.count,
   };
 
   // Get only the current page's records.

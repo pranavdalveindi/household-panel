@@ -43,12 +43,33 @@ type AppSidebarProps = {
   userEmail: string;
   userName: string;
   isAdmin?: boolean;
+  userRole?: string | null;
+};
+
+const ROLE_DETAILS: Record<string, { label: string; description: string }> = {
+  call_center: {
+    label: "Call Center",
+    description: "Call Center Operations & Household Calling",
+  },
+  admin: {
+    label: "Administrator",
+    description: "Full Admin Access & User Management",
+  },
+  data_team: {
+    label: "Data Team",
+    description: "Data Analytics & Verification",
+  },
+  developer: {
+    label: "Developer",
+    description: "System Development & Engineering",
+  },
 };
 
 export function AppSidebar({
   userEmail,
   userName,
   isAdmin = false,
+  userRole = null,
 }: AppSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -56,6 +77,17 @@ export function AppSidebar({
 
   const [loggingOut, setLoggingOut] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+
+  const roleInfo =
+    (userRole && ROLE_DETAILS[userRole]) || {
+      label: userRole
+        ? userRole
+            .split("_")
+            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(" ")
+        : "Unassigned",
+      description: "Standard Application Access",
+    };
 
   // Reset local UI state when the authenticated account changes.
   useEffect(() => {
@@ -188,8 +220,8 @@ export function AppSidebar({
                     {userName}
                   </span>
 
-                  <span className="truncate text-xs text-muted-foreground">
-                    View profile
+                  <span className="truncate text-xs font-medium text-muted-foreground">
+                    {roleInfo.label}
                   </span>
                 </div>
 
@@ -212,12 +244,21 @@ export function AppSidebar({
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">
-                        {userName}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate text-sm font-semibold">
+                          {userName}
+                        </p>
+                        <span className="inline-flex rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                          {roleInfo.label}
+                        </span>
+                      </div>
 
                       <p className="break-all text-xs text-muted-foreground">
                         {userEmail}
+                      </p>
+
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {roleInfo.description}
                       </p>
                     </div>
                   </div>
