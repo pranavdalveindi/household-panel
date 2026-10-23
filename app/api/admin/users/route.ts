@@ -6,6 +6,7 @@ import { requireAdmin } from "@/src/lib/supabase/require-admin";
 const ALLOWED_ROLES = [
   "data_team",
   "call_center",
+  "field_executive",
   "developer",
   "admin",
 ] as const;

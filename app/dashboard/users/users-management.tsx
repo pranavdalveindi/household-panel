@@ -26,6 +26,7 @@ import {
 const ROLES = [
   { value: "data_team", label: "Data Team" },
   { value: "call_center", label: "Call Center" },
+  { value: "field_executive", label: "Field Executive" },
   { value: "developer", label: "Developer" },
   { value: "admin", label: "Admin" },
 ] as const;
@@ -287,10 +288,10 @@ export default function UsersManagement() {
           </CardHeader>
 
           <CardContent>
-            <div className="text-2xl font-bold">4</div>
+            <div className="text-2xl font-bold">5</div>
 
             <CardDescription>
-              Data Team, Call Center, Developer, and Admin.
+              Data Team, Call Center, Field Executive, Developer, and Admin.
             </CardDescription>
           </CardContent>
         </Card>

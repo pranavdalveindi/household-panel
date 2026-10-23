@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { createClient } from "@/src/lib/supabase/server";
+import { createAdminClient } from "@/src/lib/supabase/admin";
 import { HouseholdTable } from "@/components/household-table";
 
 const PAGE_SIZE = 25;
@@ -120,11 +121,11 @@ export default async function DashboardPage({
       .select("id", { count: "exact", head: true })
       .ilike("call_status", "%call successful%"),
 
-    // Count records with a scheduled date
+    // Count records with a scheduled appointment
     supabase
       .from("tv_measurement_households")
       .select("id", { count: "exact", head: true })
-      .not("scheduled_date", "is", null),
+      .eq("appointment_call_status", "Scheduled"),
   ]);
 
   // Detect query errors.
@@ -160,12 +161,52 @@ export default async function DashboardPage({
 
   // Get only the current page's records.
   const rawRecords = householdResult.data ?? [];
+  const householdIds = rawRecords.map((r) => r.id);
+
+  const appointmentsMap: Record<
+    string,
+    Array<{
+      id: string;
+      scheduled_at: string;
+      created_by?: string | null;
+      created_at?: string;
+    }>
+  > = {};
+
+  if (householdIds.length > 0) {
+    try {
+      const adminClient = createAdminClient();
+      const { data: apptsData } = await adminClient
+        .from("household_appointments")
+        .select("id, household_record_id, scheduled_at, created_by, created_at")
+        .in("household_record_id", householdIds)
+        .order("scheduled_at", { ascending: true });
+
+      if (apptsData) {
+        for (const appt of apptsData) {
+          if (!appointmentsMap[appt.household_record_id]) {
+            appointmentsMap[appt.household_record_id] = [];
+          }
+          appointmentsMap[appt.household_record_id].push({
+            id: appt.id,
+            scheduled_at: appt.scheduled_at,
+            created_by: appt.created_by,
+            created_at: appt.created_at,
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching appointments:", e);
+    }
+  }
 
   // Strip sensitive personal information for the Data Team.
   const records = rawRecords.map((record) => {
+    const appointments = appointmentsMap[record.id] ?? [];
     if (isDataTeam) {
       return {
         ...record,
+        appointments,
         respondent_name: null,
         contact_number: null,
         telephone_number: null,
@@ -180,7 +221,10 @@ export default async function DashboardPage({
       };
     }
 
-    return record;
+    return {
+      ...record,
+      appointments,
+    };
   });
 
   // Generate the destination URL for a page.

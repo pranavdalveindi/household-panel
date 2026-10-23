@@ -8,6 +8,11 @@ export const ALLOWED_CALL_STATUSES = [
   "Number does not connect",
 ] as const;
 
+export const ALLOWED_APPOINTMENT_CALL_STATUSES = [
+  "Scheduled",
+  "Rejected",
+] as const;
+
 export const ALLOWED_INSTALLATION_STATUSES = [
   "pending",
   "installed",
@@ -18,32 +23,35 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-/**
- * Normalizes call status string to exact allowed value.
- */
-function normalizeCallStatus(value: unknown): (typeof ALLOWED_CALL_STATUSES)[number] | null {
+function normalizeCallStatus(
+  value: unknown
+): (typeof ALLOWED_CALL_STATUSES)[number] | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim().toLowerCase();
   for (const status of ALLOWED_CALL_STATUSES) {
-    if (status.toLowerCase() === trimmed) {
-      return status;
-    }
+    if (status.toLowerCase() === trimmed) return status;
   }
   return null;
 }
 
-/**
- * Normalizes installation status string to exact allowed value.
- */
+function normalizeAppointmentCallStatus(
+  value: unknown
+): (typeof ALLOWED_APPOINTMENT_CALL_STATUSES)[number] | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  for (const status of ALLOWED_APPOINTMENT_CALL_STATUSES) {
+    if (status.toLowerCase() === trimmed.toLowerCase()) return status;
+  }
+  return null;
+}
+
 function normalizeInstallationStatus(
   value: unknown
 ): (typeof ALLOWED_INSTALLATION_STATUSES)[number] | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim().toLowerCase();
   for (const status of ALLOWED_INSTALLATION_STATUSES) {
-    if (status.toLowerCase() === trimmed) {
-      return status;
-    }
+    if (status.toLowerCase() === trimmed) return status;
   }
   return null;
 }
@@ -51,12 +59,12 @@ function normalizeInstallationStatus(
 /**
  * PATCH /api/households/:id
  *
- * Update call_status, scheduled_date, and installation_status.
- * Only Call Center users (and admins) may update household records.
+ * - call_center: may update call_status and appointment_call_status.
+ * - field_executive: may update installation_status only.
  */
 export async function PATCH(request: Request, context: RouteContext) {
   try {
-    // Authenticate the user.
+    // Authenticate.
     const supabase = await createClient();
 
     const {
@@ -71,13 +79,12 @@ export async function PATCH(request: Request, context: RouteContext) {
       );
     }
 
-    // Restrict updates to company users.
     const email = user.email?.trim().toLowerCase() ?? "";
-
     if (!email.endsWith("@inditronics.com")) {
       return NextResponse.json(
         {
-          error: "Only authorized company users may update household records.",
+          error:
+            "Only authorized company users may update household records.",
         },
         { status: 403 }
       );
@@ -85,7 +92,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     const adminClient = createAdminClient();
 
-    // Verify the user's role: ONLY call_center is permitted.
+    // Resolve role.
     const { data: roleRecord, error: roleError } = await adminClient
       .from("user_roles")
       .select("role")
@@ -101,11 +108,12 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
 
     const role = roleRecord?.role;
-    if (role !== "call_center") {
+
+    if (role !== "call_center" && role !== "field_executive") {
       return NextResponse.json(
         {
           error:
-            "Permission denied. Only Call Center users can update household records.",
+            "Permission denied. Only Call Center and Field Executive users can update household records.",
         },
         { status: 403 }
       );
@@ -123,7 +131,9 @@ export async function PATCH(request: Request, context: RouteContext) {
     // Confirm the household exists.
     const { data: existingRecord, error: existingError } = await adminClient
       .from("tv_measurement_households")
-      .select("id, appointment_status, call_status, scheduled_date")
+      .select(
+        "id, appointment_status, call_status, scheduled_date, appointment_call_status, installation_status"
+      )
       .eq("id", id)
       .maybeSingle();
 
@@ -132,7 +142,6 @@ export async function PATCH(request: Request, context: RouteContext) {
         "PATCH /api/households/[id] existing record error:",
         existingError
       );
-
       return NextResponse.json(
         { error: "Unable to read the existing household record." },
         { status: 500 }
@@ -146,7 +155,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       );
     }
 
-    // Parse request body.
+    // Parse body.
     const body = await request.json().catch(() => null);
 
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -156,8 +165,70 @@ export async function PATCH(request: Request, context: RouteContext) {
       );
     }
 
-    // Validate Call Status.
-    const normalizedCallStatus = normalizeCallStatus(body.call_status);
+    const now = new Date().toISOString();
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // FIELD EXECUTIVE path: only installation_status is permitted.
+    // ──────────────────────────────────────────────────────────────────────────
+    if (role === "field_executive") {
+      const normalizedInstall = normalizeInstallationStatus(
+        (body as Record<string, unknown>).installation_status
+      );
+
+      if (!normalizedInstall) {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid Installation Status. Options are: pending, installed, rejected.",
+          },
+          { status: 400 }
+        );
+      }
+
+      // Field executive may only update when appointment_call_status is Scheduled.
+      if (existingRecord.appointment_call_status !== "Scheduled") {
+        return NextResponse.json(
+          {
+            error:
+              "Cannot update Installation Status when Appointment Call Status is not Scheduled.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const { data, error: updateError } = await adminClient
+        .from("tv_measurement_households")
+        .update({
+          installation_status: normalizedInstall,
+          updated_at: now,
+        })
+        .eq("id", id)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error(
+          "PATCH /api/households/[id] field_executive update error:",
+          updateError
+        );
+        return NextResponse.json(
+          { error: updateError.message || "Unable to update household record." },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        message: "Installation status updated successfully.",
+        household: data,
+      });
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // CALL CENTER path: call_status + appointment_call_status.
+    // ──────────────────────────────────────────────────────────────────────────
+    const b = body as Record<string, unknown>;
+
+    const normalizedCallStatus = normalizeCallStatus(b.call_status);
 
     if (!normalizedCallStatus) {
       return NextResponse.json(
@@ -169,118 +240,47 @@ export async function PATCH(request: Request, context: RouteContext) {
       );
     }
 
-    // Process Scheduled Date & Time.
-    // If call status is not "call successful", scheduled_date cannot be set.
-    let scheduledDate: string | null = null;
+    // appointment_call_status is required when call is successful.
+    const normalizedApptCallStatus = normalizeAppointmentCallStatus(
+      b.appointment_call_status
+    );
 
-    if (normalizedCallStatus === "call successful") {
-      if (
-        typeof body.scheduled_date === "string" &&
-        body.scheduled_date.trim() !== ""
-      ) {
-        const rawDate = body.scheduled_date.trim();
-        const parsedDate = new Date(rawDate);
-        if (Number.isNaN(parsedDate.getTime())) {
-          return NextResponse.json(
-            { error: "Please provide a valid Scheduled Date and Time." },
-            { status: 400 }
-          );
-        }
-        scheduledDate = rawDate;
-      } else if (
-        body.scheduled_date !== null &&
-        body.scheduled_date !== undefined &&
-        body.scheduled_date !== ""
-      ) {
-        return NextResponse.json(
-          { error: "Invalid Scheduled Date." },
-          { status: 400 }
-        );
-      }
-    } else {
-      // For Not reachable or Number does not connect, clear scheduled date.
-      scheduledDate = null;
-    }
-
-    // Validate Installation Status.
-    let installationStatus: string | null = null;
-    if (body.installation_status) {
-      const normalizedInstall = normalizeInstallationStatus(
-        body.installation_status
+    if (normalizedCallStatus === "call successful" && !normalizedApptCallStatus) {
+      return NextResponse.json(
+        {
+          error:
+            "Appointment Call Status is required when Call Status is 'call successful'. Options are: Scheduled, Rejected.",
+        },
+        { status: 400 }
       );
-      if (!normalizedInstall) {
-        return NextResponse.json(
-          {
-            error:
-              "Invalid Installation Status. Options are: pending, installed, rejected.",
-          },
-          { status: 400 }
-        );
-      }
-      installationStatus = normalizedInstall;
     }
-
-    const now = new Date().toISOString();
 
     const fullPayload: Record<string, unknown> = {
       call_status: normalizedCallStatus,
-      scheduled_date: scheduledDate,
+      appointment_call_status:
+        normalizedCallStatus === "call successful"
+          ? normalizedApptCallStatus
+          : "Rejected",
       processed_at: now,
       processed_by: user.id,
       updated_at: now,
     };
 
-    if (installationStatus !== null) {
-      fullPayload.installation_status = installationStatus;
-    }
-
-    // Attempt update with full payload
-    let { data, error: updateError } = await adminClient
+    const { data, error: updateError } = await adminClient
       .from("tv_measurement_households")
       .update(fullPayload)
       .eq("id", id)
       .select()
       .single();
 
-    // If installation_status column does not exist yet in the database,
-    // fallback gracefully to updating without it so the request does not fail.
-    if (
-      updateError &&
-      (updateError.code === "PGRST204" ||
-        updateError.message?.includes("installation_status"))
-    ) {
-      console.warn(
-        "Notice: 'installation_status' column not found in database schema cache. " +
-          "Updating household without installation_status. " +
-          "Run 'ALTER TABLE tv_measurement_households ADD COLUMN IF NOT EXISTS installation_status text DEFAULT \\'pending\\';' in Supabase SQL editor."
-      );
-
-      const fallbackPayload: Record<string, unknown> = {
-        call_status: normalizedCallStatus,
-        scheduled_date: scheduledDate,
-        processed_at: now,
-        processed_by: user.id,
-        updated_at: now,
-      };
-
-      const fallbackResult = await adminClient
-        .from("tv_measurement_households")
-        .update(fallbackPayload)
-        .eq("id", id)
-        .select()
-        .single();
-
-      data = fallbackResult.data;
-      updateError = fallbackResult.error;
-    }
-
     if (updateError) {
-      console.error("PATCH /api/households/[id] update error:", updateError);
-
+      console.error(
+        "PATCH /api/households/[id] call_center update error:",
+        updateError
+      );
       return NextResponse.json(
         {
-          error:
-            updateError.message || "Unable to update household record.",
+          error: updateError.message || "Unable to update household record.",
         },
         { status: 500 }
       );
@@ -288,13 +288,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     return NextResponse.json({
       message: "Household updated successfully.",
-      household: {
-        ...data,
-        call_status: normalizedCallStatus,
-        scheduled_date: scheduledDate,
-        installation_status: installationStatus,
-        appointment_status: existingRecord.appointment_status,
-      },
+      household: data,
     });
   } catch (error) {
     console.error("PATCH /api/households/[id] unexpected error:", error);
@@ -310,3 +304,4 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
   }
 }
+

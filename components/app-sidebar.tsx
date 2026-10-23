@@ -51,6 +51,10 @@ const ROLE_DETAILS: Record<string, { label: string; description: string }> = {
     label: "Call Center",
     description: "Call Center Operations & Household Calling",
   },
+  field_executive: {
+    label: "Field Executive",
+    description: "On-site Installation & Status Updates",
+  },
   admin: {
     label: "Administrator",
     description: "Full Admin Access & User Management",
