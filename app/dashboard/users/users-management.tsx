@@ -23,6 +23,8 @@ import {
   RefreshCw,
 } from "lucide-react";
 
+import { api } from "@/lib/api";
+
 const ROLES = [
   { value: "data_team", label: "Data Team" },
   { value: "call_center", label: "Call Center" },
@@ -42,7 +44,6 @@ type ManagedUser = {
 
 function formatDate(value: string | null) {
   if (!value) return "—";
-
   return new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium",
   }).format(new Date(value));
@@ -54,9 +55,7 @@ function roleLabel(role: string | null) {
 
 export default function UsersManagement() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
-  const [roleDrafts, setRoleDrafts] = useState<
-    Record<string, AppRole | "">
-  >({});
+  const [roleDrafts, setRoleDrafts] = useState<Record<string, AppRole | "">>({});
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -74,31 +73,19 @@ export default function UsersManagement() {
     setError(null);
 
     try {
-      const response = await fetch("/api/admin/users", {
-        cache: "no-store",
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error ?? "Unable to load users.");
-      }
+      // ← replaced fetch with api.getUsers
+      const result = await api.getUsers();
 
       const loadedUsers = result.users as ManagedUser[];
-
       setUsers(loadedUsers);
 
       const drafts: Record<string, AppRole | ""> = {};
-
       for (const user of loadedUsers) {
         drafts[user.id] = user.role ?? "";
       }
-
       setRoleDrafts(drafts);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Unable to load users."
-      );
+      setError(err instanceof Error ? err.message : "Unable to load users.");
     } finally {
       setLoading(false);
     }
@@ -116,35 +103,18 @@ export default function UsersManagement() {
     setSuccess(null);
 
     try {
-      const response = await fetch("/api/admin/users", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email,
-          password,
-          role: newRole,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error ?? "Unable to create user.");
-      }
+      // ← replaced fetch with api.createUser
+      const result = await api.createUser({ email, password, role: newRole });
 
       setEmail("");
       setPassword("");
       setNewRole("data_team");
 
-      setSuccess(`User ${result.user.email} was created successfully.`);
+      setSuccess(`User ${result.email} was created successfully.`);
 
       await loadUsers();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Unable to create user."
-      );
+      setError(err instanceof Error ? err.message : "Unable to create user.");
     } finally {
       setCreating(false);
     }
@@ -152,7 +122,6 @@ export default function UsersManagement() {
 
   async function handleRoleUpdate(user: ManagedUser) {
     const role = roleDrafts[user.id];
-
     if (!role || role === user.role) return;
 
     setBusyUserId(user.id);
@@ -160,27 +129,13 @@ export default function UsersManagement() {
     setSuccess(null);
 
     try {
-      const response = await fetch(`/api/admin/users/${user.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ role }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error ?? "Unable to update role.");
-      }
+      // ← replaced fetch with api.updateUserRole
+      await api.updateUserRole(user.id, role);
 
       setSuccess(`Role updated for ${user.email ?? "the user"}.`);
-
       await loadUsers();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Unable to update role."
-      );
+      setError(err instanceof Error ? err.message : "Unable to update role.");
     } finally {
       setBusyUserId(null);
     }
@@ -200,31 +155,21 @@ export default function UsersManagement() {
     setSuccess(null);
 
     try {
-      const response = await fetch(`/api/admin/users/${user.id}`, {
-        method: "DELETE",
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error ?? "Unable to delete user.");
-      }
+      // ← replaced fetch with api.deleteUser
+      await api.deleteUser(user.id);
 
       setSuccess(`User ${user.email ?? ""} was deleted successfully.`);
-
       await loadUsers();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Unable to delete user."
-      );
+      setError(err instanceof Error ? err.message : "Unable to delete user.");
     } finally {
       setBusyUserId(null);
     }
   }
 
+  // ── JSX is completely unchanged from your original ──
   return (
     <div className="space-y-6">
-      {/* Page heading */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <button
           type="button"
@@ -237,7 +182,6 @@ export default function UsersManagement() {
         </button>
       </div>
 
-      {/* Feedback messages */}
       {error && (
         <div
           role="alert"
@@ -248,48 +192,30 @@ export default function UsersManagement() {
       )}
 
       {success && (
-        <div
-          role="status"
-          className="rounded-lg border p-4 text-sm"
-        >
+        <div role="status" className="rounded-lg border p-4 text-sm">
           {success}
         </div>
       )}
 
-      {/* Summary */}
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Registered Users
-            </CardTitle>
-
+            <CardTitle className="text-sm font-medium">Registered Users</CardTitle>
             <Users className="size-4 text-muted-foreground" />
           </CardHeader>
-
           <CardContent>
-            <div className="text-2xl font-bold">
-              {loading ? "—" : users.length}
-            </div>
-
-            <CardDescription>
-              Accounts registered in Supabase Auth.
-            </CardDescription>
+            <div className="text-2xl font-bold">{loading ? "—" : users.length}</div>
+            <CardDescription>Accounts registered in Supabase Auth.</CardDescription>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Available Roles
-            </CardTitle>
-
+            <CardTitle className="text-sm font-medium">Available Roles</CardTitle>
             <ShieldCheck className="size-4 text-muted-foreground" />
           </CardHeader>
-
           <CardContent>
             <div className="text-2xl font-bold">5</div>
-
             <CardDescription>
               Data Team, Call Center, Field Executive, Developer, and Admin.
             </CardDescription>
@@ -297,32 +223,21 @@ export default function UsersManagement() {
         </Card>
       </div>
 
-      {/* Create user form */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <UserPlus className="size-5" />
             Add User
           </CardTitle>
-
-          <CardDescription>
-            Create an internal account and assign its role.
-          </CardDescription>
+          <CardDescription>Create an internal account and assign its role.</CardDescription>
         </CardHeader>
 
         <CardContent>
-          <form
-            onSubmit={handleCreateUser}
-            className="grid gap-4 md:grid-cols-2"
-          >
+          <form onSubmit={handleCreateUser} className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <label
-                htmlFor="new-user-email"
-                className="text-sm font-medium"
-              >
+              <label htmlFor="new-user-email" className="text-sm font-medium">
                 Email Address
               </label>
-
               <input
                 id="new-user-email"
                 type="email"
@@ -336,13 +251,9 @@ export default function UsersManagement() {
             </div>
 
             <div className="space-y-2">
-              <label
-                htmlFor="new-user-password"
-                className="text-sm font-medium"
-              >
+              <label htmlFor="new-user-password" className="text-sm font-medium">
                 Initial Password
               </label>
-
               <input
                 id="new-user-password"
                 type="password"
@@ -357,19 +268,13 @@ export default function UsersManagement() {
             </div>
 
             <div className="space-y-2">
-              <label
-                htmlFor="new-user-role"
-                className="text-sm font-medium"
-              >
+              <label htmlFor="new-user-role" className="text-sm font-medium">
                 Assign Role
               </label>
-
               <select
                 id="new-user-role"
                 value={newRole}
-                onChange={(event) =>
-                  setNewRole(event.target.value as AppRole)
-                }
+                onChange={(event) => setNewRole(event.target.value as AppRole)}
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {ROLES.map((role) => (
@@ -394,14 +299,10 @@ export default function UsersManagement() {
         </CardContent>
       </Card>
 
-      {/* Existing users */}
       <Card>
         <CardHeader>
           <CardTitle>Existing Users</CardTitle>
-
-          <CardDescription>
-            Change a user's role or delete their account.
-          </CardDescription>
+          <CardDescription>Change a user's role or delete their account.</CardDescription>
         </CardHeader>
 
         <CardContent>
@@ -418,25 +319,11 @@ export default function UsersManagement() {
               <table className="w-full min-w-[760px] text-sm">
                 <thead className="bg-muted/50">
                   <tr className="border-b">
-                    <th className="px-4 py-3 text-left font-medium">
-                      Email
-                    </th>
-
-                    <th className="px-4 py-3 text-left font-medium">
-                      Current Role
-                    </th>
-
-                    <th className="px-4 py-3 text-left font-medium">
-                      Change Role
-                    </th>
-
-                    <th className="px-4 py-3 text-left font-medium">
-                      Created
-                    </th>
-
-                    <th className="px-4 py-3 text-right font-medium">
-                      Actions
-                    </th>
+                    <th className="px-4 py-3 text-left font-medium">Email</th>
+                    <th className="px-4 py-3 text-left font-medium">Current Role</th>
+                    <th className="px-4 py-3 text-left font-medium">Change Role</th>
+                    <th className="px-4 py-3 text-left font-medium">Created</th>
+                    <th className="px-4 py-3 text-right font-medium">Actions</th>
                   </tr>
                 </thead>
 
@@ -450,14 +337,10 @@ export default function UsersManagement() {
                         className="border-b last:border-b-0 hover:bg-muted/30"
                       >
                         <td className="px-4 py-3">
-                          <span className="font-medium">
-                            {user.email ?? "No email"}
-                          </span>
+                          <span className="font-medium">{user.email ?? "No email"}</span>
                         </td>
 
-                        <td className="px-4 py-3">
-                          {roleLabel(user.role)}
-                        </td>
+                        <td className="px-4 py-3">{roleLabel(user.role)}</td>
 
                         <td className="px-4 py-3">
                           <select
@@ -471,15 +354,9 @@ export default function UsersManagement() {
                             }
                             className="h-9 min-w-36 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
-                            <option value="" disabled>
-                              Unassigned
-                            </option>
-
+                            <option value="" disabled>Unassigned</option>
                             {ROLES.map((role) => (
-                              <option
-                                key={role.value}
-                                value={role.value}
-                              >
+                              <option key={role.value} value={role.value}>
                                 {role.label}
                               </option>
                             ))}

@@ -1,28 +1,27 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/src/lib/supabase/server";
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "../layout";
 import UsersManagement from "./users-management";
+import { Loader2 } from "lucide-react";
 
-export default async function UsersPage() {
-  const supabase = await createClient();
+export default function UsersPage() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
 
-  // Check the logged-in user
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  useEffect(() => {
+    if (!loading && (!user || user.role !== "admin")) {
+      router.replace("/dashboard");
+    }
+  }, [user, loading, router]);
 
-  if (!user) {
-    redirect("/login");
-  }
-
-  // Check whether the user is an admin
-  const { data: userRole, error } = await supabase
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (error || userRole?.role !== "admin") {
-    redirect("/dashboard");
+  if (loading || !user || user.role !== "admin") {
+    return (
+      <div className="flex min-h-60 items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   return (

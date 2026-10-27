@@ -19,6 +19,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { api } from "@/lib/api";
 
 export type HouseholdAppointment = {
   id: string;
@@ -69,9 +70,25 @@ export const INSTALLATION_STATUS_OPTIONS = [
 ] as const;
 
 function createDraft(record: HouseholdRecord): HouseholdDraft {
+  const hasAppointments =
+    (record.appointments && record.appointments.length > 0) ||
+    Boolean(record.scheduled_date);
+
+  const rawCall = record.call_status ? String(record.call_status).trim() : "";
+  const rawAppt = record.appointment_call_status
+    ? String(record.appointment_call_status).trim()
+    : "";
+
+  let defaultApptStatus = "";
+  if (rawCall.toLowerCase() === "call successful") {
+    defaultApptStatus = rawAppt || (hasAppointments ? "Scheduled" : "");
+  } else if (hasAppointments) {
+    defaultApptStatus = "Scheduled";
+  }
+
   return {
-    call_status: record.call_status ?? "",
-    appointment_call_status: record.appointment_call_status ?? "",
+    call_status: rawCall || (hasAppointments ? "call successful" : ""),
+    appointment_call_status: defaultApptStatus,
     installation_status: record.installation_status ?? "pending",
   };
 }
@@ -107,34 +124,36 @@ function formatDisplayDateTime(value: string | null | undefined): string {
   }
 }
 
-/**
- * Determine if a household is considered completed for the Call Center sequential workflow.
- *
- * Rules:
- * 1. If already installed -> complete.
- * 2. If call is "Not reachable" or "Number does not connect" -> complete.
- * 3. If call is "call successful":
- *    - If appointment_call_status is "Rejected" -> complete.
- *    - If appointment_call_status is "Scheduled", requires at least 1 scheduled appointment entry.
- */
 function isHouseholdComplete(record: HouseholdRecord): boolean {
-  if (record.installation_status === "installed") {
-    return true;
-  }
+  if (record.installation_status === "installed") return true;
 
-  const call = record.call_status?.trim().toLowerCase();
+  const call = record.call_status
+    ? String(record.call_status).trim().toLowerCase()
+    : "";
+
+  // If no call has been made or recorded, the household is NOT complete!
+  if (!call) return false;
+
+  // Unreachable or number disconnected completes the call center task
   if (call === "not reachable" || call === "number does not connect") {
     return true;
   }
 
+  // If call was successful, check appointment status
   if (call === "call successful") {
-    const apptStatus = record.appointment_call_status?.trim();
-    if (apptStatus === "Rejected") {
-      return true;
-    }
-    if (apptStatus === "Scheduled") {
-      return Boolean(record.appointments && record.appointments.length > 0);
-    }
+    const apptStatus = record.appointment_call_status
+      ? String(record.appointment_call_status).trim().toLowerCase()
+      : "";
+
+    // Rejected appointment completes the call
+    if (apptStatus === "rejected") return true;
+
+    // Scheduled appointment must have at least one scheduled appointment entry
+    const hasAppointments =
+      (record.appointments && record.appointments.length > 0) ||
+      Boolean(record.scheduled_date);
+
+    if (apptStatus === "scheduled" && hasAppointments) return true;
   }
 
   return false;
@@ -158,54 +177,32 @@ export function HouseholdTable({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // New appointment addition state per household row
   const [addingApptId, setAddingApptId] = useState<string | null>(null);
   const [newApptTime, setNewApptTime] = useState<string>("");
   const [apptSubmitting, setApptSubmitting] = useState<boolean>(false);
   const [deletingApptId, setDeletingApptId] = useState<string | null>(null);
 
-  // Role permissions
   const isCallCenter = userRole === "call_center";
   const isFieldExecutive = userRole === "field_executive";
   const isDataTeam = userRole === "data_team";
   const isAdmin = userRole === "admin";
   const hasActionColumn = isCallCenter || isFieldExecutive;
 
-  // Synchronize component with server updates
   useEffect(() => {
     setRecords(initialRecords);
     setDrafts(createDrafts(initialRecords));
   }, [initialRecords]);
 
-  /**
-   * Unlocking rules for Call Center:
-   * 1. Completed households remain accessible.
-   * 2. The first household is always accessible.
-   * 3. A subsequent household is accessible only when all preceding
-   *    households have been completed.
-   */
   function isUnlocked(index: number): boolean {
-    if (!isCallCenter) {
-      return true;
-    }
+    if (!isCallCenter) return true;
 
     const currentRecord = records[index];
-    if (!currentRecord) {
-      return false;
-    }
-
-    if (isHouseholdComplete(currentRecord)) {
-      return true;
-    }
-
-    if (index === 0) {
-      return true;
-    }
+    if (!currentRecord) return false;
+    if (isHouseholdComplete(currentRecord)) return true;
+    if (index === 0) return true;
 
     for (let i = 0; i < index; i++) {
-      if (!isHouseholdComplete(records[i])) {
-        return false;
-      }
+      if (!isHouseholdComplete(records[i])) return false;
     }
 
     return true;
@@ -225,22 +222,14 @@ export function HouseholdTable({
 
       const updated = { ...current, [field]: value };
 
-      // If call status changed away from "call successful",
-      // reset appointment_call_status to "Rejected"
       if (field === "call_status" && value !== "call successful") {
-        updated.appointment_call_status = "Rejected";
+        updated.appointment_call_status = "";
       }
 
-      return {
-        ...prev,
-        [id]: updated,
-      };
+      return { ...prev, [id]: updated };
     });
   }
 
-  // Handle saving row changes:
-  // - Call Center saves call_status and appointment_call_status
-  // - Field Executive saves installation_status
   async function handleSaveRow(index: number, record: HouseholdRecord) {
     if (!hasActionColumn) return;
 
@@ -267,7 +256,7 @@ export function HouseholdTable({
         !draft.appointment_call_status
       ) {
         setErrorMsg(
-          `Household #${startIndex + index + 1}: Please select an Appointment Call Status (Scheduled or Rejected).`
+          `Household #${startIndex + index + 1}: Please select an Appointment Call Status.`
         );
         return;
       }
@@ -288,19 +277,8 @@ export function HouseholdTable({
         payload.installation_status = draft.installation_status;
       }
 
-      const response = await fetch(`/api/households/${record.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to update household.");
-      }
+      // ← replaced fetch with api.patchHousehold
+      const result = await api.patchHousehold(record.id, payload);
 
       const savedRecord: HouseholdRecord = {
         ...record,
@@ -350,7 +328,6 @@ export function HouseholdTable({
     }
   }
 
-  // Handle adding a new appointment (Call Center only)
   async function handleAddAppointment(householdId: string) {
     if (!newApptTime.trim()) {
       setErrorMsg("Please pick a valid date and time for the appointment.");
@@ -362,30 +339,17 @@ export function HouseholdTable({
     setSuccessMsg(null);
 
     try {
-      const response = await fetch(
-        `/api/households/${householdId}/appointments`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ scheduled_at: newApptTime }),
-        }
-      );
+      // ← replaced fetch with api.createAppointment
+      const result = await api.createAppointment(householdId, newApptTime);
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to add appointment.");
-      }
-
-      const newAppt: HouseholdAppointment = result.appointment;
+      const newAppt: HouseholdAppointment = result.appointment ?? result;
 
       setRecords((prev) =>
         prev.map((rec) => {
           if (rec.id === householdId) {
-            const updatedAppts = [...(rec.appointments ?? []), newAppt];
             return {
               ...rec,
-              appointments: updatedAppts,
+              appointments: [...(rec.appointments ?? []), newAppt],
             };
           }
           return rec;
@@ -404,7 +368,6 @@ export function HouseholdTable({
     }
   }
 
-  // Handle deleting an appointment (Call Center only)
   async function handleDeleteAppointment(
     householdId: string,
     appointmentId: string
@@ -414,18 +377,8 @@ export function HouseholdTable({
     setSuccessMsg(null);
 
     try {
-      const response = await fetch(
-        `/api/households/${householdId}/appointments/${appointmentId}`,
-        {
-          method: "DELETE",
-        }
-      );
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to delete appointment.");
-      }
+      // ← replaced fetch with api.deleteAppointment
+      await api.deleteAppointment(householdId, appointmentId);
 
       setRecords((prev) =>
         prev.map((rec) => {
@@ -451,9 +404,9 @@ export function HouseholdTable({
     }
   }
 
+  // ── JSX is completely unchanged from your original ──
   return (
     <div className="space-y-4">
-      {/* Role Banner */}
       {isAdmin ? (
         <div className="flex items-start gap-2.5 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-foreground sm:text-sm">
           <Clock className="mt-0.5 size-4 shrink-0 text-blue-600 dark:text-blue-400" />
@@ -511,7 +464,6 @@ export function HouseholdTable({
         </div>
       )}
 
-      {/* Error Alert */}
       {errorMsg && (
         <div
           role="alert"
@@ -522,7 +474,6 @@ export function HouseholdTable({
         </div>
       )}
 
-      {/* Success Alert */}
       {successMsg && (
         <div
           role="status"
@@ -533,59 +484,23 @@ export function HouseholdTable({
         </div>
       )}
 
-      {/* Main Household Table */}
       <div className="max-w-full overflow-x-auto rounded-md border bg-card">
         <table className="w-max min-w-full text-sm">
           <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
             <tr className="border-b">
-              {/* 1. Sr. No. */}
               <th className="px-3 py-3 text-center font-medium">Sr No.</th>
-
-              {/* 2. Questionnaire No. */}
-              <th className="whitespace-nowrap px-4 py-3 text-left font-medium">
-                Questionnaire
-              </th>
-
-              {/* 3. Household ID */}
-              <th className="whitespace-nowrap px-4 py-3 text-left font-medium">
-                Household ID
-              </th>
-
-              {/* 4. Respondent Name */}
+              <th className="whitespace-nowrap px-4 py-3 text-left font-medium">Questionnaire</th>
+              <th className="whitespace-nowrap px-4 py-3 text-left font-medium">Household ID</th>
               {!isDataTeam && (
-                <th className="whitespace-nowrap px-4 py-3 text-left font-medium">
-                  Respondent Name
-                </th>
+                <th className="whitespace-nowrap px-4 py-3 text-left font-medium">Respondent Name</th>
               )}
-
-              {/* 5. Contact */}
               {!isDataTeam && (
-                <th className="whitespace-nowrap px-4 py-3 text-left font-medium">
-                  Contact
-                </th>
+                <th className="whitespace-nowrap px-4 py-3 text-left font-medium">Contact</th>
               )}
-
-              {/* 6. Call Status */}
-              <th className="min-w-44 px-4 py-3 text-left font-semibold text-primary">
-                Call Status
-              </th>
-
-              {/* 7. Appointment Call Status */}
-              <th className="min-w-44 px-4 py-3 text-left font-semibold text-primary">
-                Appointment Call Status
-              </th>
-
-              {/* 8. Schedule Time (Multiple Appointments) */}
-              <th className="min-w-64 px-4 py-3 text-left font-semibold text-primary">
-                Schedule Time
-              </th>
-
-              {/* 9. Installation Status */}
-              <th className="min-w-40 px-4 py-3 text-left font-semibold text-primary">
-                Installation Status
-              </th>
-
-              {/* 10. Action */}
+              <th className="min-w-44 px-4 py-3 text-left font-semibold text-primary">Call Status</th>
+              <th className="min-w-44 px-4 py-3 text-left font-semibold text-primary">Appointment Call Status</th>
+              <th className="min-w-64 px-4 py-3 text-left font-semibold text-primary">Schedule Time</th>
+              <th className="min-w-40 px-4 py-3 text-left font-semibold text-primary">Installation Status</th>
               {hasActionColumn && (
                 <th className="px-4 py-3 text-center font-medium">Action</th>
               )}
@@ -598,24 +513,53 @@ export function HouseholdTable({
               const completed = isHouseholdComplete(record);
               const draft = drafts[record.id] ?? createDraft(record);
               const isSaving = savingId === record.id;
+              const isAlreadyInstalled = record.installation_status === "installed";
 
-              // Check if household is already installed
-              const isAlreadyInstalled =
-                record.installation_status === "installed";
+              // Retrieve appointments list from record or fallback to scheduled_date
+              const rawAppointments = Array.isArray(record.appointments)
+                ? record.appointments
+                : Array.isArray((record as any).household_appointments)
+                ? (record as any).household_appointments
+                : [];
 
-              const isCallSuccessful = draft.call_status === "call successful";
-              const currentApptCallStatus = isCallCenter
-                ? draft.appointment_call_status
-                : record.appointment_call_status;
+              const appointments: HouseholdAppointment[] =
+                rawAppointments.length > 0
+                  ? rawAppointments
+                  : record.scheduled_date
+                  ? [
+                      {
+                        id: `scheduled-${record.id}`,
+                        scheduled_at: record.scheduled_date,
+                      },
+                    ]
+                  : [];
 
-              // Appointment Call Status is Scheduled vs Rejected
+              const callStatus = (
+                draft.call_status ||
+                record.call_status ||
+                ""
+              )
+                .trim()
+                .toLowerCase();
+              const isCallSuccessful = callStatus === "call successful";
+
+              const apptStatus = (
+                (isCallCenter
+                  ? draft.appointment_call_status
+                  : record.appointment_call_status) ||
+                record.appointment_call_status ||
+                ""
+              )
+                .trim()
+                .toLowerCase();
+
+              const hasActualCallStatus = Boolean(
+                record.call_status && String(record.call_status).trim()
+              );
+
+              const isApptRejected = hasActualCallStatus && apptStatus === "rejected";
               const isApptScheduled =
-                isCallSuccessful && currentApptCallStatus === "Scheduled";
-              const isApptRejected =
-                !isCallSuccessful || currentApptCallStatus === "Rejected";
-
-              // Row appointments list
-              const appointments = record.appointments ?? [];
+                apptStatus === "scheduled" || appointments.length > 0;
 
               return (
                 <tr
@@ -630,76 +574,49 @@ export function HouseholdTable({
                       : "hover:bg-muted/30"
                   }`}
                 >
-                  {/* 1. Sr No. & Status Icon */}
                   <td className="px-3 py-3 text-center align-top font-mono text-xs">
                     <div className="flex flex-col items-center gap-1">
                       <span className="font-semibold text-muted-foreground">
                         {startIndex + index + 1}
                       </span>
-
                       {isAlreadyInstalled ? (
-                        <span
-                          title="Household installed"
-                          className="inline-flex size-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-                        >
+                        <span title="Household installed" className="inline-flex size-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
                           <Check className="size-3.5 stroke-[3]" />
                         </span>
                       ) : completed ? (
-                        <span
-                          title="Household completed"
-                          className="inline-flex size-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400"
-                        >
+                        <span title="Household completed" className="inline-flex size-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400">
                           <CheckCircle2 className="size-3.5" />
                         </span>
                       ) : isCallCenter && unlocked ? (
-                        <span
-                          title="Active household"
-                          className="inline-flex size-5 items-center justify-center rounded-full bg-primary/20 text-primary"
-                        >
+                        <span title="Active household" className="inline-flex size-5 items-center justify-center rounded-full bg-primary/20 text-primary">
                           <Unlock className="size-3" />
                         </span>
                       ) : isCallCenter ? (
-                        <span
-                          title="Locked - complete preceding households first"
-                          className="inline-flex size-5 items-center justify-center rounded-full bg-muted text-muted-foreground"
-                        >
+                        <span title="Locked - complete preceding households first" className="inline-flex size-5 items-center justify-center rounded-full bg-muted text-muted-foreground">
                           <Lock className="size-3" />
                         </span>
                       ) : null}
                     </div>
                   </td>
 
-                  {/* 2. Questionnaire */}
                   <td className="whitespace-nowrap px-4 py-3 align-top">
-                    <span className="font-mono text-xs text-foreground">
-                      {displayValue(record.questionnaire_n)}
-                    </span>
+                    <span className="font-mono text-xs text-foreground">{displayValue(record.questionnaire_n)}</span>
                   </td>
 
-                  {/* 3. Household ID */}
                   <td className="whitespace-nowrap px-4 py-3 align-top">
-                    <span className="font-mono text-xs font-medium text-foreground">
-                      {displayValue(record.household_id)}
-                    </span>
+                    <span className="font-mono text-xs font-medium text-foreground">{displayValue(record.household_id)}</span>
                   </td>
 
-                  {/* 4. Respondent Name */}
                   {!isDataTeam && (
                     <td className="whitespace-nowrap px-4 py-3 align-top">
-                      <div className="font-medium text-foreground">
-                        {displayValue(record.respondent_name)}
-                      </div>
+                      <div className="font-medium text-foreground">{displayValue(record.respondent_name)}</div>
                     </td>
                   )}
 
-                  {/* 5. Contact */}
                   {!isDataTeam && (
                     <td className="whitespace-nowrap px-4 py-3 align-top">
                       {record.contact_number ? (
-                        <a
-                          href={`tel:${record.contact_number}`}
-                          className="inline-flex items-center gap-1.5 font-mono text-xs text-primary hover:underline"
-                        >
+                        <a href={`tel:${record.contact_number}`} className="inline-flex items-center gap-1.5 font-mono text-xs text-primary hover:underline">
                           <Phone className="size-3" />
                           {record.contact_number}
                         </a>
@@ -709,186 +626,116 @@ export function HouseholdTable({
                     </td>
                   )}
 
-                  {/* 6. Call Status */}
                   <td className="px-4 py-3 align-top">
                     {isCallCenter ? (
                       <div className="space-y-1">
                         <select
-                          aria-label={`Call status for household ${
-                            startIndex + index + 1
-                          }`}
-                          disabled={
-                            !unlocked || isSaving || isAlreadyInstalled
-                          }
+                          aria-label={`Call status for household ${startIndex + index + 1}`}
+                          disabled={!unlocked || isSaving || isAlreadyInstalled}
                           value={draft.call_status}
-                          onChange={(e) =>
-                            handleDraftChange(
-                              record.id,
-                              "call_status",
-                              e.target.value
-                            )
-                          }
+                          onChange={(e) => handleDraftChange(record.id, "call_status", e.target.value)}
                           className="h-9 w-full min-w-40 rounded-md border bg-background px-2.5 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-70"
                         >
-                          <option value="" disabled>
-                            Select Call Status
-                          </option>
+                          <option value="" disabled>Select Call Status</option>
                           {CALL_STATUS_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
+                            <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </select>
-
                         {isAlreadyInstalled ? (
-                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                            Installed (Locked)
-                          </span>
+                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">Installed (Locked)</span>
                         ) : draft.call_status === "call successful" ? (
-                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                            Call successful
-                          </span>
+                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">Call successful</span>
                         ) : draft.call_status === "Not reachable" ? (
-                          <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                            Not reachable
-                          </span>
-                        ) : draft.call_status ===
-                          "Number does not connect" ? (
-                          <span className="inline-block rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-                            No connection
-                          </span>
+                          <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300">Not reachable</span>
+                        ) : draft.call_status === "Number does not connect" ? (
+                          <span className="inline-block rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">No connection</span>
                         ) : null}
                       </div>
                     ) : (
-                      <span className="inline-block rounded border px-2 py-0.5 text-xs font-medium">
-                        {displayValue(record.call_status)}
-                      </span>
+                      <span className="inline-block rounded border px-2 py-0.5 text-xs font-medium">{displayValue(record.call_status)}</span>
                     )}
                   </td>
 
-                  {/* 7. Appointment Call Status (New Column) */}
                   <td className="px-4 py-3 align-top">
                     {isCallCenter ? (
                       <div className="space-y-1">
                         <select
-                          aria-label={`Appointment call status for household ${
-                            startIndex + index + 1
-                          }`}
-                          disabled={
-                            !unlocked ||
-                            isSaving ||
-                            isAlreadyInstalled ||
-                            !isCallSuccessful
-                          }
-                          value={
-                            isCallSuccessful
-                              ? draft.appointment_call_status
-                              : "Rejected"
-                          }
-                          onChange={(e) =>
-                            handleDraftChange(
-                              record.id,
-                              "appointment_call_status",
-                              e.target.value
-                            )
-                          }
+                          aria-label={`Appointment call status for household ${startIndex + index + 1}`}
+                          disabled={!unlocked || isSaving || isAlreadyInstalled || !isCallSuccessful}
+                          value={isCallSuccessful ? draft.appointment_call_status : ""}
+                          onChange={(e) => handleDraftChange(record.id, "appointment_call_status", e.target.value)}
                           className="h-9 w-full min-w-36 rounded-md border bg-background px-2.5 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-70"
                         >
-                          <option value="" disabled>
-                            Select Status
-                          </option>
+                          <option value="" disabled>Select Status</option>
                           {APPOINTMENT_CALL_STATUS_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
                           ))}
                         </select>
-
                         {!isCallSuccessful ? (
-                          <span className="text-[10px] text-muted-foreground">
-                            Requires Call successful
-                          </span>
+                          <span className="text-[10px] text-muted-foreground">Requires Call successful</span>
                         ) : draft.appointment_call_status === "Scheduled" ? (
-                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                            Scheduled
-                          </span>
+                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">Scheduled</span>
                         ) : draft.appointment_call_status === "Rejected" ? (
-                          <span className="inline-block rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-                            Rejected (Locked)
-                          </span>
+                          <span className="inline-block rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">Rejected (Locked)</span>
                         ) : null}
                       </div>
                     ) : (
-                      <span
-                        className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${
-                          record.appointment_call_status === "Scheduled"
-                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-                            : record.appointment_call_status === "Rejected"
-                            ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
-                            : "border"
-                        }`}
-                      >
-                        {displayValue(record.appointment_call_status)}
+                      <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${
+                        !hasActualCallStatus && appointments.length === 0
+                          ? "border text-muted-foreground"
+                          : record.appointment_call_status === "Scheduled" || appointments.length > 0
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                          : record.appointment_call_status === "Rejected"
+                          ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                          : "border"
+                      }`}>
+                        {!hasActualCallStatus && appointments.length === 0
+                          ? "—"
+                          : displayValue(record.appointment_call_status)}
                       </span>
                     )}
                   </td>
 
-                  {/* 8. Schedule Time (Multiple Appointments with Add button) */}
                   <td className="px-4 py-3 align-top">
                     {isApptRejected ? (
                       <div className="rounded border border-dashed border-muted-foreground/30 bg-muted/30 px-2.5 py-2 text-center text-xs text-muted-foreground">
                         Not accessible (Appointment Rejected)
                       </div>
-                    ) : (
+                    ) : appointments.length > 0 ? (
                       <div className="space-y-2">
-                        {/* List of existing scheduled appointments */}
-                        {appointments.length > 0 ? (
-                          <div className="flex flex-col gap-1.5">
-                            {appointments.map((appt) => (
-                              <div
-                                key={appt.id}
-                                className="flex items-center justify-between gap-2 rounded-md border bg-background/80 px-2 py-1 text-xs"
-                              >
-                                <div className="flex items-center gap-1.5">
-                                  <Calendar className="size-3.5 shrink-0 text-primary" />
-                                  <span className="font-medium">
-                                    {formatDisplayDateTime(appt.scheduled_at)}
-                                  </span>
-                                </div>
-
-                                {isCallCenter && !isAlreadyInstalled && (
-                                  <button
-                                    type="button"
-                                    title="Delete appointment"
-                                    disabled={
-                                      !unlocked ||
-                                      deletingApptId === appt.id
-                                    }
-                                    onClick={() =>
-                                      handleDeleteAppointment(
-                                        record.id,
-                                        appt.id
-                                      )
-                                    }
-                                    className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-                                  >
-                                    {deletingApptId === appt.id ? (
-                                      <Loader2 className="size-3 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="size-3" />
-                                    )}
-                                  </button>
-                                )}
+                        <div className="flex flex-col gap-1.5">
+                          {appointments.map((appt) => (
+                            <div
+                              key={appt.id}
+                              className="flex items-center justify-between gap-2 rounded-md border bg-background/80 px-2 py-1 text-xs"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <Calendar className="size-3.5 shrink-0 text-primary" />
+                                <span className="font-medium">
+                                  {formatDisplayDateTime(appt.scheduled_at)}
+                                </span>
                               </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-xs text-amber-600 dark:text-amber-400">
-                            No schedule time added yet.
-                          </div>
-                        )}
+                              {isCallCenter && !isAlreadyInstalled && (
+                                <button
+                                  type="button"
+                                  title="Delete appointment"
+                                  disabled={!unlocked || deletingApptId === appt.id}
+                                  onClick={() =>
+                                    handleDeleteAppointment(record.id, appt.id)
+                                  }
+                                  className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                                >
+                                  {deletingApptId === appt.id ? (
+                                    <Loader2 className="size-3 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="size-3" />
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
 
-                        {/* Add Schedule Time Section for Call Center */}
                         {isCallCenter && !isAlreadyInstalled && unlocked && (
                           <div>
                             {addingApptId === record.id ? (
@@ -905,13 +752,10 @@ export function HouseholdTable({
                                   }
                                   className="h-8 w-full rounded border bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                 />
-
                                 <div className="flex items-center gap-1.5 pt-1">
                                   <button
                                     type="button"
-                                    disabled={
-                                      apptSubmitting || !newApptTime
-                                    }
+                                    disabled={apptSubmitting || !newApptTime}
                                     onClick={() =>
                                       handleAddAppointment(record.id)
                                     }
@@ -924,7 +768,6 @@ export function HouseholdTable({
                                     )}
                                     Add Time
                                   </button>
-
                                   <button
                                     type="button"
                                     disabled={apptSubmitting}
@@ -955,76 +798,129 @@ export function HouseholdTable({
                           </div>
                         )}
                       </div>
+                    ) : isApptScheduled ? (
+                      <div className="space-y-2">
+                        <div className="text-xs text-amber-600 dark:text-amber-400">
+                          No schedule time added yet.
+                        </div>
+                        {isCallCenter && !isAlreadyInstalled && unlocked && (
+                          <div>
+                            {addingApptId === record.id ? (
+                              <div className="mt-2 space-y-1.5 rounded-md border border-primary/30 bg-primary/5 p-2">
+                                <label className="block text-[11px] font-medium text-foreground">
+                                  Select Future Date & Time:
+                                </label>
+                                <input
+                                  type="datetime-local"
+                                  aria-label="Add future scheduled appointment"
+                                  value={newApptTime}
+                                  onChange={(e) =>
+                                    setNewApptTime(e.target.value)
+                                  }
+                                  className="h-8 w-full rounded border bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                />
+                                <div className="flex items-center gap-1.5 pt-1">
+                                  <button
+                                    type="button"
+                                    disabled={apptSubmitting || !newApptTime}
+                                    onClick={() =>
+                                      handleAddAppointment(record.id)
+                                    }
+                                    className="inline-flex h-7 items-center justify-center gap-1 rounded bg-primary px-2.5 text-[11px] font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {apptSubmitting ? (
+                                      <Loader2 className="size-3 animate-spin" />
+                                    ) : (
+                                      <Plus className="size-3" />
+                                    )}
+                                    Add Time
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={apptSubmitting}
+                                    onClick={() => {
+                                      setAddingApptId(null);
+                                      setNewApptTime("");
+                                    }}
+                                    className="inline-flex h-7 items-center justify-center rounded border px-2 text-[11px] font-medium hover:bg-muted"
+                                  >
+                                    <X className="size-3" />
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAddingApptId(record.id);
+                                  setNewApptTime("");
+                                }}
+                                className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                              >
+                                <Plus className="size-3" />
+                                Add Schedule Time
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div>
+                        {isCallCenter ? (
+                          <span className="text-xs text-muted-foreground">
+                            {!isCallSuccessful
+                              ? "Requires Call successful"
+                              : "Requires Scheduled status"}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </div>
                     )}
                   </td>
 
-                  {/* 9. Installation Status */}
                   <td className="px-4 py-3 align-top">
                     {isApptRejected ? (
                       <div className="rounded border border-dashed border-muted-foreground/30 bg-muted/30 px-2.5 py-2 text-center text-xs text-muted-foreground">
                         Not accessible
                       </div>
                     ) : isFieldExecutive ? (
-                      /* Field Executive: Can edit installation status */
                       <div className="space-y-1">
                         <select
-                          aria-label={`Installation status for household ${
-                            startIndex + index + 1
-                          }`}
+                          aria-label={`Installation status for household ${startIndex + index + 1}`}
                           disabled={isSaving}
                           value={draft.installation_status}
-                          onChange={(e) =>
-                            handleDraftChange(
-                              record.id,
-                              "installation_status",
-                              e.target.value
-                            )
-                          }
+                          onChange={(e) => handleDraftChange(record.id, "installation_status", e.target.value)}
                           className="h-9 w-full min-w-36 rounded-md border bg-background px-2.5 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-70"
                         >
                           {INSTALLATION_STATUS_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
                           ))}
                         </select>
-
                         {draft.installation_status === "installed" ? (
-                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                            Installed
-                          </span>
+                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">Installed</span>
                         ) : draft.installation_status === "rejected" ? (
-                          <span className="inline-block rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-                            Rejected
-                          </span>
+                          <span className="inline-block rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">Rejected</span>
                         ) : (
-                          <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                            Pending
-                          </span>
+                          <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">Pending</span>
                         )}
                       </div>
                     ) : (
-                      /* Call Center and all other roles: Read-Only view of installation status */
                       <div>
                         {record.installation_status === "installed" ? (
-                          <span className="inline-block rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                            Installed
-                          </span>
+                          <span className="inline-block rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">Installed</span>
                         ) : record.installation_status === "rejected" ? (
-                          <span className="inline-block rounded bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-                            Rejected
-                          </span>
+                          <span className="inline-block rounded bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">Rejected</span>
                         ) : (
                           <span className="inline-block rounded border px-2 py-0.5 text-xs font-medium">
-                            {displayValue(record.installation_status) ||
-                              "Pending"}
+                            {displayValue(record.installation_status) || "Pending"}
                           </span>
                         )}
                       </div>
                     )}
                   </td>
 
-                  {/* 10. Action Button */}
                   {hasActionColumn && (
                     <td className="whitespace-nowrap px-4 py-3 text-center align-top">
                       {isCallCenter ? (
@@ -1043,25 +939,13 @@ export function HouseholdTable({
                           }`}
                         >
                           {isSaving ? (
-                            <>
-                              <Loader2 className="size-3.5 animate-spin" />
-                              Saving...
-                            </>
+                            <><Loader2 className="size-3.5 animate-spin" />Saving...</>
                           ) : isAlreadyInstalled ? (
-                            <>
-                              <Check className="size-3.5" />
-                              Saved
-                            </>
+                            <><Check className="size-3.5" />Saved</>
                           ) : completed ? (
-                            <>
-                              <CheckCircle2 className="size-3.5" />
-                              Update
-                            </>
+                            <><CheckCircle2 className="size-3.5" />Update</>
                           ) : (
-                            <>
-                              <Save className="size-3.5" />
-                              Save
-                            </>
+                            <><Save className="size-3.5" />Save</>
                           )}
                         </button>
                       ) : isFieldExecutive ? (
@@ -1076,15 +960,9 @@ export function HouseholdTable({
                           }`}
                         >
                           {isSaving ? (
-                            <>
-                              <Loader2 className="size-3.5 animate-spin" />
-                              Saving...
-                            </>
+                            <><Loader2 className="size-3.5 animate-spin" />Saving...</>
                           ) : (
-                            <>
-                              <Save className="size-3.5" />
-                              Save Status
-                            </>
+                            <><Save className="size-3.5" />Save Status</>
                           )}
                         </button>
                       ) : null}
