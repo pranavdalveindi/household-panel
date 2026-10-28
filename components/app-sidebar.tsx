@@ -14,7 +14,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { createClient } from "@/src/lib/supabase/client";
+import { api } from "@/lib/api";
 
 import {
   Sidebar,
@@ -112,14 +112,7 @@ export function AppSidebar({
     setLoggingOut(true);
 
     try {
-      const supabase = createClient();
-
-      const { error } = await supabase.auth.signOut();
-
-      if (error) {
-        console.error("Sign-out failed:", error.message);
-        return;
-      }
+      await api.logout();
 
       setProfileOpen(false);
 

@@ -2,8 +2,7 @@
 
 import { useState, useEffect, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-
-import { createClient } from "../../src/lib/supabase/client";
+import { api } from "@/lib/api";
 
 import {
   Card,
@@ -45,23 +44,17 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const supabase = createClient();
-
-      const { error: loginError } =
-        await supabase.auth.signInWithPassword({
-          email: normalizedEmail,
-          password,
-        });
-
-      if (loginError) {
-        setError("Invalid email or password. Please try again.");
-        return;
-      }
+      // ← replaced supabase.auth.signInWithPassword with api.login
+      await api.login(normalizedEmail, password);
 
       router.replace("/dashboard");
       router.refresh();
-    } catch {
-      setError("Something went wrong. Please try again.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -83,9 +76,7 @@ export default function LoginPage() {
 
         <Separator orientation="vertical" className="mx-5 h-6" />
 
-        <span className="text-sm text-muted-foreground">
-          Household Panel
-        </span>
+        <span className="text-sm text-muted-foreground">Household Panel</span>
       </header>
 
       {/* Login section */}
@@ -93,9 +84,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           {/* Page heading */}
           <div className="mb-7 space-y-2">
-            <p className="text-sm font-medium text-primary">
-              Welcome back
-            </p>
+            <p className="text-sm font-medium text-primary">Welcome back</p>
 
             <h1 className="text-2xl font-semibold tracking-tight">
               Sign in to your account
@@ -109,9 +98,7 @@ export default function LoginPage() {
           {/* Login card */}
           <Card className="rounded-lg shadow-sm">
             <CardHeader className="pb-4">
-              <CardTitle className="text-base">
-                Account details
-              </CardTitle>
+              <CardTitle className="text-base">Account details</CardTitle>
 
               <CardDescription>
                 Enter your registered company email and password.
@@ -152,20 +139,13 @@ export default function LoginPage() {
 
                 {/* Error message */}
                 {error && (
-                  <p
-                    role="alert"
-                    className="text-sm font-medium text-destructive"
-                  >
+                  <p role="alert" className="text-sm font-medium text-destructive">
                     {error}
                   </p>
                 )}
 
                 {/* Submit button */}
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={loading}
-                >
+                <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? "Signing in..." : "Sign in"}
                 </Button>
               </form>
@@ -175,11 +155,7 @@ export default function LoginPage() {
           {/* Security separator */}
           <div className="mt-6 flex items-center gap-3">
             <Separator className="flex-1" />
-
-            <span className="text-xs text-muted-foreground">
-              SECURE ACCESS
-            </span>
-
+            <span className="text-xs text-muted-foreground">SECURE ACCESS</span>
             <Separator className="flex-1" />
           </div>
 

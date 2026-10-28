@@ -1,90 +1,117 @@
-import { redirect } from "next/navigation";
+"use client";
 
-import { createClient } from "@/src/lib/supabase/server";
+import { createContext, useContext, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { api, getStoredToken } from "@/lib/api";
 import { AppSidebar } from "@/components/app-sidebar";
-
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-
 import { Separator } from "@/components/ui/separator";
+import { Loader2 } from "lucide-react";
 
-// Required for your current Next.js Cache Components configuration.
-export const instant = false;
+export type AuthUser = {
+  id: string;
+  email: string;
+  name?: string;
+  role: string;
+};
 
-export default async function DashboardLayout({
+type AuthContextType = {
+  user: AuthUser | null;
+  loading: boolean;
+};
+
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  loading: true,
+});
+
+export function useAuth() {
+  return useContext(AuthContext);
+}
+
+export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // Get the authenticated user.
-  const supabase = await createClient();
+  const router = useRouter();
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
+  useEffect(() => {
+    const token = getStoredToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
 
-  // Redirect users who are not logged in.
-  if (error || !user) {
-    redirect("/login");
+    api
+      .getMe()
+      .then((res) => {
+        if (!res?.user) {
+          router.replace("/login");
+          return;
+        }
+
+        const email = (res.user.email ?? "").trim().toLowerCase();
+        if (!email.endsWith("@inditronics.com")) {
+          router.replace("/login?error=unauthorized");
+          return;
+        }
+
+        setUser(res.user);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("Failed to load user session:", err);
+        router.replace("/login");
+      });
+  }, [router]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="size-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Loading session...</p>
+        </div>
+      </div>
+    );
   }
 
-  const email = user.email?.trim().toLowerCase() ?? "";
-
-  // Allow only confirmed company email accounts.
-  if (
-    !user.email_confirmed_at ||
-    !email.endsWith("@inditronics.com")
-  ) {
-    redirect("/login?error=unauthorized");
-  }
-
-  // Get the user's name from Supabase Auth metadata.
+  const email = user?.email ?? "";
   const userName =
-    user.user_metadata?.full_name ||
-    user.user_metadata?.name ||
-    email.split("@")[0];
-
-  // Check whether the user is an administrator and get their role
-  const { data: roleRecord } = await supabase
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  const userRole = roleRecord?.role ?? null;
+    user?.name || (email ? email.split("@")[0] : "User");
+  const userRole = user?.role ?? null;
   const isAdmin = userRole === "admin";
 
   return (
-    <SidebarProvider>
-      <AppSidebar
-        userEmail={email}
-        userName={userName}
-        isAdmin={isAdmin}
-        userRole={userRole}
-      />
+    <AuthContext.Provider value={{ user, loading }}>
+      <SidebarProvider>
+        <AppSidebar
+          userEmail={email}
+          userName={userName}
+          isAdmin={isAdmin}
+          userRole={userRole}
+        />
 
-      <SidebarInset>
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-          <SidebarTrigger />
+        <SidebarInset>
+          <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
+            <SidebarTrigger />
 
-          <Separator
-            orientation="vertical"
-            className="h-5"
-          />
+            <Separator orientation="vertical" className="h-5" />
 
-          <span className="text-sm font-medium">
-            Household Panel
-          </span>
-        </header>
+            <span className="text-sm font-medium">Household Panel</span>
+          </header>
 
-        <main className="flex-1 bg-muted/30 p-4 md:p-6">
-          {children}
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
+          <main className="flex-1 bg-muted/30 p-4 md:p-6">{children}</main>
+        </SidebarInset>
+      </SidebarProvider>
+    </AuthContext.Provider>
   );
 }
+
