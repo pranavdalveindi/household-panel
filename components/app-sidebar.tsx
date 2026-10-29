@@ -12,6 +12,7 @@ import {
   ChevronUp,
   LoaderCircle,
   Users,
+  BarChart3,
 } from "lucide-react";
 
 import { api } from "@/lib/api";
@@ -171,6 +172,17 @@ export function AppSidebar({
                 >
                   <LayoutDashboard />
                   <span>Dashboard</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  render={<Link href="/dashboard/panel" />}
+                  isActive={pathname.startsWith("/dashboard/panel")}
+                  tooltip="Panel Monitoring"
+                >
+                  <BarChart3 />
+                  <span>Panel Monitoring</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
 

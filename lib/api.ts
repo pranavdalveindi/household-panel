@@ -171,4 +171,10 @@ export const api = {
     apiFetch(`/api/admin/users/${id}`, {
       method: 'DELETE',
     }),
+
+  // Panel Monitoring
+  getPanelSummary: () => apiFetch('/api/panel/summary'),
+  getPanelHeatmap: () => apiFetch('/api/panel/heatmap'),
+  getPanelRegion: (regionCode: number) => apiFetch(`/api/panel/region/${regionCode}`),
+  getPanelUnclassified: () => apiFetch('/api/panel/unclassified'),
 }
