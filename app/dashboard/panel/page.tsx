@@ -58,6 +58,8 @@ type StackedBarData = {
   sec1_live: number;
   sec2_live: number;
   sec3_live: number;
+  sec4_live: number;
+  sec5_live: number;
 };
 
 type RegionCell = {
@@ -85,6 +87,8 @@ type UnclassifiedRow = {
   region_name?: string | null;
   sec: number | null;
   mosr: number | null;
+  current_status?: string | null;
+  environment?: string | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -118,8 +122,8 @@ function nullDisplay(val: string | number | null | undefined) {
   return <>{val}</>;
 }
 
-const SEC_LABELS = [1, 2, 3];
-const MOSR_LABELS = [1, 2, 3, 4];
+const SEC_LABELS = [1, 2, 3, 4, 5];
+const MOSR_LABELS = [1, 2, 3, 4, 5, 6];
 
 // ─── 1. Summary Cards ────────────────────────────────────────────────────────
 
@@ -469,6 +473,8 @@ const SEC_COLORS = {
   sec1: "#6366f1", // Indigo
   sec2: "#ec4899", // Pink
   sec3: "#f59e0b", // Amber
+  sec4: "#06b6d4", // Cyan
+  sec5: "#8b5cf6", // Purple
 };
 
 function StackedBarChartSection({
@@ -484,6 +490,8 @@ function StackedBarChartSection({
     "SEC 1": num(r.sec1_live),
     "SEC 2": num(r.sec2_live),
     "SEC 3": num(r.sec3_live),
+    "SEC 4": num(r.sec4_live),
+    "SEC 5": num(r.sec5_live),
   }));
 
   return (
@@ -493,7 +501,7 @@ function StackedBarChartSection({
           <div>
             <CardTitle>Stacked Bar Chart — Live Distribution by SEC</CardTitle>
             <CardDescription>
-              Live panel distribution across regions with 3 stacked segments (SEC 1, 2, 3).
+              Live panel distribution across regions with 5 stacked segments (SEC 1, 2, 3, 4, 5).
             </CardDescription>
           </div>
           {highlightSec && (
@@ -552,6 +560,18 @@ function StackedBarChartSection({
                 stackId="live"
                 fill={SEC_COLORS.sec3}
                 fillOpacity={highlightSec === null || highlightSec === 3 ? 1 : 0.25}
+              />
+              <Bar
+                dataKey="SEC 4"
+                stackId="live"
+                fill={SEC_COLORS.sec4}
+                fillOpacity={highlightSec === null || highlightSec === 4 ? 1 : 0.25}
+              />
+              <Bar
+                dataKey="SEC 5"
+                stackId="live"
+                fill={SEC_COLORS.sec5}
+                fillOpacity={highlightSec === null || highlightSec === 5 ? 1 : 0.25}
                 radius={[4, 4, 0, 0]}
               />
             </BarChart>
@@ -588,7 +608,7 @@ function RegionDrillDownSection({
             </CardTitle>
           </div>
           <CardDescription className="mt-1">
-            SEC (1,2,3) × MOSR (1,2,3,4) grid for this region only. Cells with shortfall &gt; 0 are highlighted in red.
+            SEC (1–5) × MOSR (1–6) grid for this region only. Cells with shortfall &gt; 0 are highlighted in red.
           </CardDescription>
         </div>
 
@@ -701,6 +721,8 @@ function UnclassifiedTableSection({ rows }: { rows: UnclassifiedRow[] }) {
                 <th className="px-4 py-3 text-left font-medium">Region</th>
                 <th className="px-4 py-3 text-center font-medium">SEC</th>
                 <th className="px-4 py-3 text-center font-medium">MOSR</th>
+                <th className="px-4 py-3 text-left font-medium">Status</th>
+                <th className="px-4 py-3 text-left font-medium">Environment</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -710,6 +732,8 @@ function UnclassifiedTableSection({ rows }: { rows: UnclassifiedRow[] }) {
                   <td className="px-4 py-2">{nullDisplay(row.region_name || row.region)}</td>
                   <td className="px-4 py-2 text-center">{nullDisplay(row.sec)}</td>
                   <td className="px-4 py-2 text-center">{nullDisplay(row.mosr)}</td>
+                  <td className="px-4 py-2">{nullDisplay(row.current_status)}</td>
+                  <td className="px-4 py-2">{nullDisplay(row.environment)}</td>
                 </tr>
               ))}
             </tbody>
@@ -839,6 +863,12 @@ export default function PanelPage() {
               const sec3 = regCells
                 .filter((c) => Number(c.sec) === 3)
                 .reduce((acc, c) => acc + num(c.live), 0);
+              const sec4 = regCells
+                .filter((c) => Number(c.sec) === 4)
+                .reduce((acc, c) => acc + num(c.live), 0);
+              const sec5 = regCells
+                .filter((c) => Number(c.sec) === 5)
+                .reduce((acc, c) => acc + num(c.live), 0);
 
               return {
                 region_code: r.region_code,
@@ -846,6 +876,8 @@ export default function PanelPage() {
                 sec1_live: sec1,
                 sec2_live: sec2,
                 sec3_live: sec3,
+                sec4_live: sec4,
+                sec5_live: sec5,
               };
             } catch {
               return {
@@ -854,6 +886,8 @@ export default function PanelPage() {
                 sec1_live: 0,
                 sec2_live: 0,
                 sec3_live: 0,
+                sec4_live: 0,
+                sec5_live: 0,
               };
             }
           })
