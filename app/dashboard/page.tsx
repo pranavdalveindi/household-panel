@@ -123,7 +123,7 @@ function DashboardContent() {
       {/* Page Heading & Refresh */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Dashboard</h1>
           <p className="text-sm text-muted-foreground">
             Overview of household and appointment information.
           </p>
@@ -157,7 +157,7 @@ function DashboardContent() {
           const Icon = item.icon;
 
           return (
-            <Card key={item.key}>
+            <Card key={item.key} className="min-w-0">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">{item.title}</CardTitle>
                 <Icon className="size-4 text-muted-foreground" />
@@ -178,16 +178,16 @@ function DashboardContent() {
       </div>
 
       {/* Household Records Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Household Records</CardTitle>
+      <Card className="min-w-0 overflow-hidden">
+        <CardHeader className="px-4 pb-3 pt-4 sm:px-6">
+          <CardTitle className="text-lg">Household Records</CardTitle>
           <CardDescription>
             Browse household records, 25 records at a time. Scroll horizontally to
             view additional columns.
           </CardDescription>
         </CardHeader>
 
-        <CardContent>
+        <CardContent className="px-3 pb-4 sm:px-6 sm:pb-6">
           {loading ? (
             <div className="flex min-h-60 flex-col items-center justify-center gap-2">
               <Loader2 className="size-6 animate-spin text-primary" />
@@ -200,11 +200,13 @@ function DashboardContent() {
               </p>
             </div>
           ) : (
-            <HouseholdTable
-              initialRecords={records}
-              startIndex={startIndex}
-              userRole={userRole}
-            />
+            <div className="overflow-x-auto">
+              <HouseholdTable
+                initialRecords={records}
+                startIndex={startIndex}
+                userRole={userRole}
+              />
+            </div>
           )}
 
           {/* Pagination Controls */}
@@ -216,7 +218,7 @@ function DashboardContent() {
                 {" · "}Page {currentPage} of {totalPages}
               </p>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {currentPage > 1 ? (
                   <Link
                     href={getPageHref(currentPage - 1)}

@@ -203,10 +203,12 @@ function GroupedBarChartSection({
   data,
   activeRegion,
   onRegionClick,
+  onBarClick,
 }: {
   data: RegionBarData[];
   activeRegion: number | null;
   onRegionClick: (regionCode: number) => void;
+  onBarClick: (regionCode: number) => void;
 }) {
   const chartData = data.map((r) => ({
     name: r.region_name || `Region ${r.region_code}`,
@@ -296,7 +298,7 @@ function GroupedBarChartSection({
                 onClick={(entry) => {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   const rc = (entry as any)?.payload?.region_code;
-                  if (rc != null) onRegionClick(Number(rc));
+                  if (rc != null) onBarClick(Number(rc));
                 }}
               />
               <Bar
@@ -307,7 +309,7 @@ function GroupedBarChartSection({
                 onClick={(entry) => {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   const rc = (entry as any)?.payload?.region_code;
-                  if (rc != null) onRegionClick(Number(rc));
+                  if (rc != null) onBarClick(Number(rc));
                 }}
               />
             </BarChart>
@@ -734,6 +736,16 @@ export default function PanelPage() {
   });
 
   const [regions, setRegions] = useState<RegionBarData[]>([]);
+  const [regionPreviews, setRegionPreviews] = useState<
+    Array<{
+      region_code: number;
+      region_name: string;
+      total_target: number;
+      total_live: number;
+      total_shortfall: number;
+      cells: RegionCell[];
+    }>
+  >([]);
   const [cells, setCells] = useState<HeatmapCell[]>([]);
   const [stacked, setStacked] = useState<StackedBarData[]>([]);
   const [unclassified, setUnclassified] = useState<UnclassifiedRow[]>([]);
@@ -744,6 +756,7 @@ export default function PanelPage() {
   const [drillDown, setDrillDown] = useState<RegionDrillDownData | null>(null);
   const [drillLoading, setDrillLoading] = useState(false);
   const [drillError, setDrillError] = useState<string | null>(null);
+  const [drillView, setDrillView] = useState<"inline" | "dialog">("inline");
 
   const [highlight, setHighlight] = useState<{
     sec: number;
@@ -817,49 +830,37 @@ export default function PanelPage() {
       }));
       setRegions(parsedRegions);
 
-      // Pre-fetch/derive SEC 1, 2, 3 distribution per region for Stacked Bar Chart
-      if (parsedRegions.length > 0) {
-        const stackedItems: StackedBarData[] = await Promise.all(
-          parsedRegions.map(async (r) => {
-            try {
-              const regDetail = await api.getPanelRegion(r.region_code);
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const regCells: any[] = Array.isArray(regDetail?.cells)
-                ? regDetail.cells
-                : Array.isArray(regDetail)
-                ? regDetail
-                : [];
+      const previewData = await Promise.all(
+        parsedRegions.map(async (region) => {
+          try {
+            const res = await api.getPanelRegion(region.region_code);
+            const regionCells: RegionCell[] = Array.isArray(res?.cells)
+              ? res.cells
+              : Array.isArray(res)
+              ? res
+              : [];
 
-              const sec1 = regCells
-                .filter((c) => Number(c.sec) === 1)
-                .reduce((acc, c) => acc + num(c.live), 0);
-              const sec2 = regCells
-                .filter((c) => Number(c.sec) === 2)
-                .reduce((acc, c) => acc + num(c.live), 0);
-              const sec3 = regCells
-                .filter((c) => Number(c.sec) === 3)
-                .reduce((acc, c) => acc + num(c.live), 0);
-
-              return {
-                region_code: r.region_code,
-                region_name: r.region_name,
-                sec1_live: sec1,
-                sec2_live: sec2,
-                sec3_live: sec3,
-              };
-            } catch {
-              return {
-                region_code: r.region_code,
-                region_name: r.region_name,
-                sec1_live: 0,
-                sec2_live: 0,
-                sec3_live: 0,
-              };
-            }
-          })
-        );
-        setStacked(stackedItems);
-      }
+            return {
+              region_code: region.region_code,
+              region_name: region.region_name,
+              total_target: num(res?.total_target ?? region.target),
+              total_live: num(res?.total_live ?? region.live),
+              total_shortfall: num(res?.total_shortfall ?? region.shortfall),
+              cells: regionCells,
+            };
+          } catch {
+            return {
+              region_code: region.region_code,
+              region_name: region.region_name,
+              total_target: region.target,
+              total_live: region.live,
+              total_shortfall: region.shortfall,
+              cells: [],
+            };
+          }
+        })
+      );
+      setRegionPreviews(previewData);
     } catch (err) {
       console.error("Failed to load panel data:", err);
       setError(err instanceof Error ? err.message : "Unable to load panel data.");
@@ -877,6 +878,36 @@ export default function PanelPage() {
     setActiveRegion(regionCode);
     setDrillError(null);
     setDrillLoading(true);
+    setDrillView("dialog");
+
+    try {
+      const res = await api.getPanelRegion(regionCode);
+      const resCells: RegionCell[] = Array.isArray(res?.cells)
+        ? res.cells
+        : Array.isArray(res)
+        ? res
+        : [];
+
+      setDrillDown({
+        region_code: Number(res?.region_code ?? regionCode),
+        region_name: res?.region_name || `Region ${regionCode}`,
+        total_target: num(res?.total_target),
+        total_live: num(res?.total_live),
+        total_shortfall: num(res?.total_shortfall),
+        cells: resCells,
+      });
+    } catch (err) {
+      setDrillError(err instanceof Error ? err.message : "Unable to load region data.");
+    } finally {
+      setDrillLoading(false);
+    }
+  }, []);
+
+  const handleInlineRegionOpen = useCallback(async (regionCode: number) => {
+    setActiveRegion(regionCode);
+    setDrillError(null);
+    setDrillLoading(true);
+    setDrillView("inline");
 
     try {
       const res = await api.getPanelRegion(regionCode);
@@ -918,7 +949,7 @@ export default function PanelPage() {
       {/* Page Heading & Refresh */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Panel Monitoring</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Panel Management</h1>
           <p className="text-sm text-muted-foreground">
             Live panel status by region, SEC, and MOSR.
           </p>
@@ -967,10 +998,19 @@ export default function PanelPage() {
               data={regions}
               activeRegion={activeRegion}
               onRegionClick={handleRegionClick}
+              onBarClick={handleInlineRegionOpen}
             />
-            <StackedBarChartSection
-              data={stacked}
-              highlightSec={highlight ? highlight.sec : null}
+            <RegionPreviewGrid
+              regions={regionPreviews.length > 0 ? regionPreviews : regions.map((region) => ({
+                region_code: region.region_code,
+                region_name: region.region_name,
+                total_target: region.target,
+                total_live: region.live,
+                total_shortfall: region.shortfall,
+                cells: [],
+              }))}
+              activeRegion={activeRegion}
+              onRegionClick={handleInlineRegionOpen}
             />
           </div>
 
@@ -982,7 +1022,7 @@ export default function PanelPage() {
           />
 
           {/* Section 5: Region Drill Down */}
-          {activeRegion !== null && (
+          {drillView === "inline" && activeRegion !== null && (
             <div>
               {drillLoading && (
                 <Card className="border-primary/40 p-8">
@@ -1016,6 +1056,42 @@ export default function PanelPage() {
             </div>
           )}
 
+          {drillView === "dialog" && activeRegion !== null && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 backdrop-blur-[1px]">
+              <div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl border bg-background shadow-2xl">
+                {drillLoading && (
+                  <Card className="border-primary/40 p-8">
+                    <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-5 animate-spin text-primary" />
+                      <span>Loading region {activeRegion} drill down...</span>
+                    </div>
+                  </Card>
+                )}
+                {drillError && !drillLoading && (
+                  <div
+                    role="alert"
+                    className="flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
+                  >
+                    <span>{drillError}</span>
+                    <button
+                      type="button"
+                      onClick={handleCloseDrillDown}
+                      className="font-medium underline"
+                    >
+                      Close
+                    </button>
+                  </div>
+                )}
+                {drillDown && !drillLoading && (
+                  <RegionDrillDownSection
+                    data={drillDown}
+                    onClose={handleCloseDrillDown}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Section 6: Unclassified Table (shown only when unclassified count > 0) */}
           {unclassified.length > 0 && (
             <UnclassifiedTableSection rows={unclassified} />
@@ -1023,5 +1099,112 @@ export default function PanelPage() {
         </>
       )}
     </div>
+  );
+}
+
+// ─── Region Preview Grid ───────────────────────────────────────────────────────
+
+function RegionPreviewGrid({
+  regions,
+  activeRegion,
+  onRegionClick,
+}: {
+  regions: Array<{
+    region_code: number;
+    region_name: string;
+    total_target: number;
+    total_live: number;
+    total_shortfall: number;
+    cells: RegionCell[];
+  }>;
+  activeRegion: number | null;
+  onRegionClick: (regionCode: number) => void;
+}) {
+  if (!regions.length) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Regions</CardTitle>
+          <CardDescription>Select a region to inspect it.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex h-52 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+            No region data available
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="flex flex-col">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <CardTitle>Regions</CardTitle>
+            <CardDescription>Click a region to open the detailed view.</CardDescription>
+          </div>
+          {activeRegion !== null && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+              Active: {activeRegion}
+            </span>
+          )}
+        </div>
+      </CardHeader>
+
+      <CardContent>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {regions.map((region) => {
+            const isSelected = activeRegion === region.region_code;
+            const live = num(region.total_live);
+            const target = num(region.total_target);
+            const shortfall = num(region.total_shortfall);
+
+            return (
+              <button
+                key={region.region_code}
+                type="button"
+                onClick={() => onRegionClick(region.region_code)}
+                className={`w-full rounded-xl border p-3 text-left transition-all ${
+                  isSelected
+                    ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/30"
+                    : "border-border bg-card hover:border-primary/40 hover:bg-muted/30"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-foreground">
+                      {region.region_name || `Region ${region.region_code}`}
+                    </div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      {live.toLocaleString()} / {target.toLocaleString()} live
+                    </div>
+                  </div>
+
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      shortfall > 0
+                        ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                        : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                    }`}
+                  >
+                    {shortfall > 0 ? `${shortfall.toLocaleString()} short` : "On target"}
+                  </span>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>Target</span>
+                  <span className="font-medium text-foreground">{target.toLocaleString()}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>Live</span>
+                  <span className="font-medium text-foreground">{live.toLocaleString()}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

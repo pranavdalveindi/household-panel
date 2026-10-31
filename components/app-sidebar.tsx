@@ -182,7 +182,7 @@ export function AppSidebar({
                   tooltip="Panel Monitoring"
                 >
                   <BarChart3 />
-                  <span>Panel Monitoring</span>
+                  <span>Panel Management</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
 

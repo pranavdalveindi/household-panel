@@ -100,15 +100,17 @@ export default function DashboardLayout({
         />
 
         <SidebarInset>
-          <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-            <SidebarTrigger />
+          <header className="flex h-14 shrink-0 items-center gap-3 border-b px-3 sm:px-4">
+            <SidebarTrigger className="shrink-0" />
 
             <Separator orientation="vertical" className="h-5" />
 
-            <span className="text-sm font-medium">Household Panel</span>
+            <span className="truncate text-sm font-medium">Household Panel</span>
           </header>
 
-          <main className="flex-1 bg-muted/30 p-4 md:p-6">{children}</main>
+          <main className="flex-1 bg-muted/30 p-3 sm:p-4 md:p-6">
+            <div className="w-full">{children}</div>
+          </main>
         </SidebarInset>
       </SidebarProvider>
     </AuthContext.Provider>
