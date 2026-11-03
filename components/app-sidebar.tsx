@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   Users,
   BarChart3,
+  BellRing,
 } from "lucide-react";
 
 import { api } from "@/lib/api";
@@ -183,6 +184,17 @@ export function AppSidebar({
                 >
                   <BarChart3 />
                   <span>Panel Management</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  render={<Link href="/dashboard/panel/updates" />}
+                  isActive={pathname.startsWith("/dashboard/panel/updates")}
+                  tooltip="Panel Updates"
+                >
+                  <BellRing />
+                  <span>Panel Updates</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
