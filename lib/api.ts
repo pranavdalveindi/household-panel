@@ -178,4 +178,5 @@ export const api = {
   getPanelRegion: (regionCode: number) => apiFetch(`/api/panel/region/${regionCode}`),
   getPanelUnclassified: () => apiFetch('/api/panel/unclassified'),
   getPanelUpdates: () => apiFetch('/api/panel/updates'),
+  getPanelDemographics: () => apiFetch('/api/panel/demographics'),
 }

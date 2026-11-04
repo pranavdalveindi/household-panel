@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getStoredToken } from "@/lib/api";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { AppSidebar } from "@/components/app-sidebar";
 import {
   SidebarInset,
@@ -100,12 +101,16 @@ export default function DashboardLayout({
         />
 
         <SidebarInset>
-          <header className="flex h-14 shrink-0 items-center gap-3 border-b px-3 sm:px-4">
-            <SidebarTrigger className="shrink-0" />
+          <header className="flex h-14 shrink-0 items-center justify-between border-b px-3 sm:px-4 bg-background/95 backdrop-blur-sm">
+            <div className="flex items-center gap-3">
+              <SidebarTrigger className="shrink-0" />
+              <Separator orientation="vertical" className="h-5" />
+              <span className="truncate text-sm font-medium">Household Panel</span>
+            </div>
 
-            <Separator orientation="vertical" className="h-5" />
-
-            <span className="truncate text-sm font-medium">Household Panel</span>
+            <div className="flex items-center gap-3">
+              <ThemeToggle />
+            </div>
           </header>
 
           <main className="flex-1 bg-muted/30 p-3 sm:p-4 md:p-6">

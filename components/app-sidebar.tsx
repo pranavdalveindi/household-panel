@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -137,20 +138,20 @@ export function AppSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton
               size="lg"
-              render={<Link href="/dashboard" />}
-              tooltip="Inditronics"
+              render={<Link href="/dashboard/panel" />}
+              tooltip="Indirex"
             >
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <Building2 className="size-5" />
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#0F111A] border border-[#232738] p-1.5 shadow-sm">
+                <Image src="/indirex-icon.svg" alt="Indirex" width={24} height={24} className="object-contain" />
               </div>
 
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-semibold">
-                  Inditronics
+                <span className="truncate font-semibold tracking-wide">
+                  Indirex
                 </span>
 
                 <span className="truncate text-xs text-muted-foreground">
-                  Household Dashboard
+                  Household Panel
                 </span>
               </div>
             </SidebarMenuButton>
@@ -161,26 +162,15 @@ export function AppSidebar({
       {/* Navigation */}
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Application</SidebarGroupLabel>
+          <SidebarGroupLabel>Household Panel</SidebarGroupLabel>
 
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  render={<Link href="/dashboard" />}
-                  isActive={pathname === "/dashboard"}
-                  tooltip="Dashboard"
-                >
-                  <LayoutDashboard />
-                  <span>Dashboard</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-
-              <SidebarMenuItem>
-                <SidebarMenuButton
                   render={<Link href="/dashboard/panel" />}
-                  isActive={pathname.startsWith("/dashboard/panel")}
-                  tooltip="Panel Monitoring"
+                  isActive={pathname === "/dashboard/panel"}
+                  tooltip="Panel Management"
                 >
                   <BarChart3 />
                   <span>Panel Management</span>
@@ -197,19 +187,6 @@ export function AppSidebar({
                   <span>Panel Updates</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-
-              {isAdmin && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    render={<Link href="/dashboard/users" />}
-                    isActive={pathname.startsWith("/dashboard/users")}
-                    tooltip="User Management"
-                  >
-                    <Users />
-                    <span>User Management</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
