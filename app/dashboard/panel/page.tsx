@@ -42,6 +42,8 @@ import {
   ExternalLink,
   Wrench,
   GraduationCap,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -418,137 +420,213 @@ function HeatmapGridSection({
   highlight: { sec: number; mosr: number } | null;
   onCellClick: (sec: number, mosr: number) => void;
 }) {
+  const [isExtended, setIsExtended] = useState(false);
+
+  useEffect(() => {
+    if (!isExtended) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsExtended(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isExtended]);
+
   function getCell(sec: number, mosr: number) {
     return cells.find((c) => Number(c.sec) === sec && Number(c.mosr) === mosr);
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle>Heatmap Grid — SEC × MOSR</CardTitle>
-            <CardDescription>
-              SEC (rows 1,2,3) × MOSR (columns 1,2,3,4). Each cell shows Target / Live and Shortfall %.
-            </CardDescription>
+    <>
+      {isExtended && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity"
+          onClick={() => setIsExtended(false)}
+        />
+      )}
+      <Card
+        className={`transition-all duration-200 ${
+          isExtended
+            ? "fixed inset-2 sm:inset-4 md:inset-6 z-50 flex flex-col bg-card shadow-2xl rounded-xl border-2 border-primary/40 overflow-hidden"
+            : ""
+        }`}
+      >
+        {isExtended && (
+          <div className="flex items-center justify-between px-4 py-2 bg-primary text-primary-foreground text-xs font-medium shrink-0">
+            <div className="flex items-center gap-2">
+              <Maximize2 className="size-3.5" />
+              <span className="font-semibold">Heatmap Grid — SEC × MOSR (Extended View)</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsExtended(false)}
+              className="flex items-center gap-1 hover:opacity-80 transition-opacity text-xs font-semibold"
+            >
+              <span>Press Esc or click to exit</span>
+              <X className="size-3.5 ml-1" />
+            </button>
+          </div>
+        )}
+
+        <CardHeader className={isExtended ? "pb-3 shrink-0" : undefined}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle>Heatmap Grid — SEC × MOSR</CardTitle>
+              <CardDescription>
+                SEC (rows 1,2,3) × MOSR (columns 1,2,3,4). Each cell shows Target / Live and Shortfall %.
+              </CardDescription>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {highlight && (
+                <div className="flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+                  <Filter className="size-3.5" />
+                  <span>Highlighted: SEC {highlight.sec} × MOSR {highlight.mosr}</span>
+                  <button
+                    type="button"
+                    onClick={() => onCellClick(highlight.sec, highlight.mosr)}
+                    className="ml-1 rounded p-0.5 hover:bg-primary/20"
+                    title="Clear highlight"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              )}
+
+              <Button
+                type="button"
+                variant={isExtended ? "default" : "outline"}
+                size="sm"
+                onClick={() => setIsExtended(!isExtended)}
+                className={`h-8 gap-1.5 text-xs font-medium ${
+                  isExtended ? "bg-primary text-primary-foreground" : ""
+                }`}
+                title={isExtended ? "Exit Extended View (Esc)" : "Expand Heatmap Grid into Extended View"}
+              >
+                {isExtended ? (
+                  <>
+                    <Minimize2 className="size-3.5" />
+                    <span>Exit Extended</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="size-3.5" />
+                    <span>Extended View</span>
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
 
-          {highlight && (
-            <div className="flex items-center gap-2 self-start rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary sm:self-auto">
-              <Filter className="size-3.5" />
-              <span>Highlighted: SEC {highlight.sec} × MOSR {highlight.mosr}</span>
-              <button
-                type="button"
-                onClick={() => onCellClick(highlight.sec, highlight.mosr)}
-                className="ml-1 rounded p-0.5 hover:bg-primary/20"
-                title="Clear highlight"
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          )}
-        </div>
+          {/* Legend */}
+          <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="size-3.5 rounded border border-emerald-400 bg-emerald-100 dark:bg-emerald-950/60" />
+              Live ≥ Target
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="size-3.5 rounded border border-amber-400 bg-amber-100 dark:bg-amber-950/60" />
+              Shortfall &lt; 30%
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="size-3.5 rounded border border-rose-400 bg-rose-100 dark:bg-rose-950/60" />
+              Shortfall ≥ 30%
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="size-3.5 rounded border border-border bg-muted" />
+              Target = 0
+            </span>
+            <span className="text-muted-foreground/70">
+              (Click any cell to highlight that SEC across region charts)
+            </span>
+          </div>
+        </CardHeader>
 
-        {/* Legend */}
-        <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="size-3.5 rounded border border-emerald-400 bg-emerald-100 dark:bg-emerald-950/60" />
-            Live ≥ Target
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="size-3.5 rounded border border-amber-400 bg-amber-100 dark:bg-amber-950/60" />
-            Shortfall &lt; 30%
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="size-3.5 rounded border border-rose-400 bg-rose-100 dark:bg-rose-950/60" />
-            Shortfall ≥ 30%
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="size-3.5 rounded border border-border bg-muted" />
-            Target = 0
-          </span>
-          <span className="text-muted-foreground/70">
-            (Click any cell to highlight that SEC across region charts)
-          </span>
-        </div>
-      </CardHeader>
-
-      <CardContent>
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-muted/60 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                <th className="px-4 py-3 text-left font-semibold">SEC \ MOSR</th>
-                {MOSR_LABELS.map((m) => (
-                  <th key={m} className="px-4 py-3 text-center font-semibold">
-                    MOSR {m}
+        <CardContent className={isExtended ? "flex-1 overflow-auto p-4 sm:p-6" : undefined}>
+          <div className={`overflow-x-auto rounded-lg border ${isExtended ? "h-full flex flex-col justify-center" : ""}`}>
+            <table className={`w-full text-sm ${isExtended ? "text-base" : ""}`}>
+              <thead>
+                <tr className="bg-muted/60 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <th className={`text-left font-semibold ${isExtended ? "px-6 py-4" : "px-4 py-3"}`}>
+                    SEC \ MOSR
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {SEC_LABELS.map((sec) => (
-                <tr key={sec} className="divide-x divide-border">
-                  <td className="whitespace-nowrap bg-muted/30 px-4 py-3 text-xs font-bold text-foreground">
-                    SEC {sec}
-                  </td>
-                  {MOSR_LABELS.map((mosr) => {
-                    const cell = getCell(sec, mosr);
-                    const target = cell ? num(cell.target) : 0;
-                    const live = cell ? num(cell.live) : 0;
-                    const shortfall = cell ? num(cell.shortfall) : Math.max(0, target - live);
-                    const shortfallPct =
-                      cell && cell.shortfall_pct !== undefined
-                        ? num(cell.shortfall_pct)
-                        : target > 0
-                        ? (shortfall / target) * 100
-                        : 0;
-
-                    const isHighlighted =
-                      highlight?.sec === sec && highlight?.mosr === mosr;
-
-                    return (
-                      <td
-                        key={mosr}
-                        onClick={() => onCellClick(sec, mosr)}
-                        className={`cursor-pointer border p-3 text-center transition-all hover:scale-[1.01] hover:brightness-95 ${cellBg(
-                          target,
-                          live,
-                          shortfallPct
-                        )} ${
-                          isHighlighted
-                            ? "ring-2 ring-primary ring-offset-2 font-bold shadow-md"
-                            : ""
-                        }`}
-                      >
-                        <div className="space-y-1">
-                          <div className="font-mono text-sm font-bold">
-                            {live} <span className="opacity-60">/</span> {target}
-                          </div>
-                          {target > 0 ? (
-                            <div className="text-[11px] font-medium opacity-85">
-                              {live >= target ? (
-                                <span className="text-emerald-800 dark:text-emerald-300">
-                                  Achieved
-                                </span>
-                              ) : (
-                                <span>{Math.round(shortfallPct)}% short</span>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="text-[10px] opacity-50">Target 0</div>
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
+                  {MOSR_LABELS.map((m) => (
+                    <th key={m} className={`text-center font-semibold ${isExtended ? "px-6 py-4" : "px-4 py-3"}`}>
+                      MOSR {m}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {SEC_LABELS.map((sec) => (
+                  <tr key={sec} className="divide-x divide-border">
+                    <td className={`whitespace-nowrap bg-muted/30 font-bold text-foreground ${isExtended ? "px-6 py-4 text-sm" : "px-4 py-3 text-xs"}`}>
+                      SEC {sec}
+                    </td>
+                    {MOSR_LABELS.map((mosr) => {
+                      const cell = getCell(sec, mosr);
+                      const target = cell ? num(cell.target) : 0;
+                      const live = cell ? num(cell.live) : 0;
+                      const shortfall = cell ? num(cell.shortfall) : Math.max(0, target - live);
+                      const shortfallPct =
+                        cell && cell.shortfall_pct !== undefined
+                          ? num(cell.shortfall_pct)
+                          : target > 0
+                          ? (shortfall / target) * 100
+                          : 0;
+
+                      const isHighlighted =
+                        highlight?.sec === sec && highlight?.mosr === mosr;
+
+                      return (
+                        <td
+                          key={mosr}
+                          onClick={() => onCellClick(sec, mosr)}
+                          className={`cursor-pointer border text-center transition-all hover:scale-[1.01] hover:brightness-95 ${
+                            isExtended ? "p-4 sm:p-6" : "p-3"
+                          } ${cellBg(
+                            target,
+                            live,
+                            shortfallPct
+                          )} ${
+                            isHighlighted
+                              ? "ring-2 ring-primary ring-offset-2 font-bold shadow-md"
+                              : ""
+                          }`}
+                        >
+                          <div className="space-y-1">
+                            <div className={`font-mono font-bold ${isExtended ? "text-lg" : "text-sm"}`}>
+                              {live} <span className="opacity-60">/</span> {target}
+                            </div>
+                            {target > 0 ? (
+                              <div className={`font-medium opacity-85 ${isExtended ? "text-xs" : "text-[11px]"}`}>
+                                {live >= target ? (
+                                  <span className="text-emerald-800 dark:text-emerald-300 font-semibold">
+                                    Achieved
+                                  </span>
+                                ) : (
+                                  <span>{Math.round(shortfallPct)}% short</span>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="text-[10px] opacity-50">Target 0</div>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
@@ -660,106 +738,179 @@ function RegionDrillDownSection({
   data: RegionDrillDownData;
   onClose: () => void;
 }) {
+  const [isExtended, setIsExtended] = useState(false);
   const cells = data.cells ?? [];
+
+  useEffect(() => {
+    if (!isExtended) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsExtended(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isExtended]);
 
   function getCell(sec: number, mosr: number) {
     return cells.find((c) => Number(c.sec) === sec && Number(c.mosr) === mosr);
   }
 
   return (
-    <Card className="border-primary/50 shadow-md">
-      <CardHeader className="flex flex-row items-start justify-between pb-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <Layers className="size-5 text-primary" />
-            <CardTitle className="text-lg">
-              Region Drill Down: {data.region_name || `Region ${data.region_code}`}
-            </CardTitle>
+    <>
+      {isExtended && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity"
+          onClick={() => setIsExtended(false)}
+        />
+      )}
+      <Card
+        className={`border-primary/50 shadow-md transition-all duration-200 ${
+          isExtended
+            ? "fixed inset-2 sm:inset-4 md:inset-6 z-50 flex flex-col bg-card shadow-2xl rounded-xl border-2 border-primary overflow-hidden"
+            : ""
+        }`}
+      >
+        {isExtended && (
+          <div className="flex items-center justify-between px-4 py-2 bg-primary text-primary-foreground text-xs font-medium shrink-0">
+            <div className="flex items-center gap-2">
+              <Maximize2 className="size-3.5" />
+              <span className="font-semibold">Region Drill Down: {data.region_name || `Region ${data.region_code}`} (Extended View)</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsExtended(false)}
+              className="flex items-center gap-1 hover:opacity-80 transition-opacity text-xs font-semibold"
+            >
+              <span>Press Esc or click to exit</span>
+              <X className="size-3.5 ml-1" />
+            </button>
           </div>
-          <CardDescription className="mt-1">
-            SEC (1,2,3) × MOSR (1,2,3,4) grid for this region only. Cells with shortfall &gt; 0 are highlighted in red.
-          </CardDescription>
-        </div>
+        )}
 
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors hover:bg-muted"
-        >
-          <X className="size-3.5" />
-          Close Drill Down
-        </button>
-      </CardHeader>
+        <CardHeader className="flex flex-row items-start justify-between pb-3 shrink-0">
+          <div>
+            <div className="flex items-center gap-2">
+              <Layers className="size-5 text-primary" />
+              <CardTitle className="text-lg">
+                Region Drill Down: {data.region_name || `Region ${data.region_code}`}
+              </CardTitle>
+            </div>
+            <CardDescription className="mt-1">
+              SEC (1,2,3) × MOSR (1,2,3,4) grid for this region only. Cells with shortfall &gt; 0 are highlighted in red.
+            </CardDescription>
+          </div>
 
-      <CardContent>
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-muted/60 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                <th className="px-4 py-3 text-left font-semibold">SEC \ MOSR</th>
-                {MOSR_LABELS.map((m) => (
-                  <th key={m} className="px-4 py-3 text-center font-semibold">
-                    MOSR {m}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {SEC_LABELS.map((sec) => (
-                <tr key={sec} className="divide-x divide-border">
-                  <td className="whitespace-nowrap bg-muted/30 px-4 py-3 text-xs font-bold text-foreground">
-                    SEC {sec}
-                  </td>
-                  {MOSR_LABELS.map((mosr) => {
-                    const cell = getCell(sec, mosr);
-                    const target = cell ? num(cell.target) : 0;
-                    const live = cell ? num(cell.live) : 0;
-                    const shortfall = cell ? num(cell.shortfall) : Math.max(0, target - live);
-                    const shortfallPct =
-                      cell && cell.shortfall_pct !== undefined
-                        ? num(cell.shortfall_pct)
-                        : target > 0
-                        ? (shortfall / target) * 100
-                        : 0;
-                    const hasShortfall = shortfall > 0;
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant={isExtended ? "default" : "outline"}
+              size="sm"
+              onClick={() => setIsExtended(!isExtended)}
+              className={`h-8 gap-1.5 text-xs font-medium ${
+                isExtended ? "bg-primary text-primary-foreground" : ""
+              }`}
+              title={isExtended ? "Exit Extended View (Esc)" : "Expand into Extended View"}
+            >
+              {isExtended ? (
+                <>
+                  <Minimize2 className="size-3.5" />
+                  <span>Exit Extended</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="size-3.5" />
+                  <span>Extended View</span>
+                </>
+              )}
+            </Button>
 
-                    return (
-                      <td
-                        key={mosr}
-                        className={`border p-3 text-center transition-colors ${
-                          hasShortfall
-                            ? "bg-rose-100 text-rose-950 border-rose-300 dark:bg-rose-950/70 dark:text-rose-100 dark:border-rose-800"
-                            : target > 0
-                            ? "bg-emerald-50 text-emerald-950 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-100"
-                            : "bg-muted/40 text-muted-foreground"
-                        }`}
-                      >
-                        <div className="space-y-1">
-                          <div className="font-mono text-xs font-bold">
-                            Live: {live} / Target: {target}
-                          </div>
-                          {hasShortfall ? (
-                            <div className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">
-                              Shortfall: −{shortfall} ({Math.round(shortfallPct)}%)
-                            </div>
-                          ) : target > 0 ? (
-                            <div className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
-                              Met Target
-                            </div>
-                          ) : (
-                            <div className="text-[10px] opacity-50">Target 0</div>
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors hover:bg-muted"
+            >
+              <X className="size-3.5" />
+              Close Drill Down
+            </button>
+          </div>
+        </CardHeader>
+
+        <CardContent className={isExtended ? "flex-1 overflow-auto p-4 sm:p-6" : undefined}>
+          <div className={`overflow-x-auto rounded-lg border ${isExtended ? "h-full flex flex-col justify-center" : ""}`}>
+            <table className={`w-full text-sm ${isExtended ? "text-base" : ""}`}>
+              <thead>
+                <tr className="bg-muted/60 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <th className={`text-left font-semibold ${isExtended ? "px-6 py-4" : "px-4 py-3"}`}>SEC \ MOSR</th>
+                  {MOSR_LABELS.map((m) => (
+                    <th key={m} className={`text-center font-semibold ${isExtended ? "px-6 py-4" : "px-4 py-3"}`}>
+                      MOSR {m}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {SEC_LABELS.map((sec) => (
+                  <tr key={sec} className="divide-x divide-border">
+                    <td className={`whitespace-nowrap bg-muted/30 font-bold text-foreground ${isExtended ? "px-6 py-4 text-sm" : "px-4 py-3 text-xs"}`}>
+                      SEC {sec}
+                    </td>
+                    {MOSR_LABELS.map((mosr) => {
+                      const cell = getCell(sec, mosr);
+                      const target = cell ? num(cell.target) : 0;
+                      const live = cell ? num(cell.live) : 0;
+                      const shortfall = cell ? num(cell.shortfall) : Math.max(0, target - live);
+                      const shortfallPct =
+                        cell && cell.shortfall_pct !== undefined
+                          ? num(cell.shortfall_pct)
+                          : target > 0
+                          ? (shortfall / target) * 100
+                          : 0;
+                      const hasShortfall = shortfall > 0;
+
+                      return (
+                        <td
+                          key={mosr}
+                          className={`border text-center transition-colors ${
+                            isExtended ? "p-4 sm:p-6" : "p-3"
+                          } ${
+                            hasShortfall
+                              ? "bg-rose-100 text-rose-950 border-rose-300 dark:bg-rose-950/70 dark:text-rose-100 dark:border-rose-800"
+                              : target > 0
+                              ? "bg-emerald-50 text-emerald-950 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-100"
+                              : "bg-muted/40 text-muted-foreground"
+                          }`}
+                        >
+                          <div className="space-y-1">
+                            <div className={`font-mono font-bold ${isExtended ? "text-base" : "text-xs"}`}>
+                              Live: {live} / Target: {target}
+                            </div>
+                            {hasShortfall ? (
+                              <div className={`font-semibold text-rose-700 dark:text-rose-300 ${isExtended ? "text-xs" : "text-[11px]"}`}>
+                                Shortfall: −{shortfall} ({Math.round(shortfallPct)}%)
+                              </div>
+                            ) : target > 0 ? (
+                              <div className={`font-medium text-emerald-700 dark:text-emerald-400 ${isExtended ? "text-xs" : "text-[11px]"}`}>
+                                Met Target
+                              </div>
+                            ) : (
+                              <div className="text-[10px] opacity-50">Target 0</div>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
@@ -767,45 +918,152 @@ function RegionDrillDownSection({
 
 function UnclassifiedTableSection({ rows }: { rows: UnclassifiedRow[] }) {
   if (!rows || rows.length === 0) return null;
+  const [isExtended, setIsExtended] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    if (!isExtended) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsExtended(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isExtended]);
+
+  const filteredRows = rows.filter((r) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      (r.hhid && r.hhid.toLowerCase().includes(q)) ||
+      (r.region_name && r.region_name.toLowerCase().includes(q)) ||
+      (r.region && r.region.toLowerCase().includes(q))
+    );
+  });
 
   return (
-    <Card className="border-amber-300 dark:border-amber-700">
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="size-5 text-amber-500" />
-          <CardTitle className="text-base text-amber-700 dark:text-amber-300">
-            Data Quality Issues — Households Missing SEC or MOSR
-          </CardTitle>
-        </div>
-        <CardDescription>
-          {rows.length} household{rows.length !== 1 ? "s" : ""} missing SEC or MOSR classification data.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="max-h-96 overflow-y-auto overflow-x-auto rounded-md border bg-card">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-muted text-xs uppercase tracking-wider text-muted-foreground">
-              <tr className="border-b">
-                <th className="px-4 py-3 text-left font-medium">HHID</th>
-                <th className="px-4 py-3 text-left font-medium">Region</th>
-                <th className="px-4 py-3 text-center font-medium">SEC</th>
-                <th className="px-4 py-3 text-center font-medium">MOSR</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {rows.map((row, idx) => (
-                <tr key={row.hhid || row.id || idx} className="hover:bg-muted/30">
-                  <td className="px-4 py-2 font-mono text-xs">{nullDisplay(row.hhid)}</td>
-                  <td className="px-4 py-2">{nullDisplay(row.region_name || row.region)}</td>
-                  <td className="px-4 py-2 text-center">{nullDisplay(row.sec)}</td>
-                  <td className="px-4 py-2 text-center">{nullDisplay(row.mosr)}</td>
+    <>
+      {isExtended && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity"
+          onClick={() => setIsExtended(false)}
+        />
+      )}
+      <Card
+        className={`border-amber-300 dark:border-amber-700 transition-all duration-200 ${
+          isExtended
+            ? "fixed inset-2 sm:inset-4 md:inset-6 z-50 flex flex-col bg-card shadow-2xl rounded-xl border-2 border-amber-500 overflow-hidden"
+            : ""
+        }`}
+      >
+        {isExtended && (
+          <div className="flex items-center justify-between px-4 py-2 bg-amber-600 text-white text-xs font-medium shrink-0">
+            <div className="flex items-center gap-2">
+              <Maximize2 className="size-3.5" />
+              <span className="font-semibold">Data Quality Issues — Unclassified Households (Extended View)</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsExtended(false)}
+              className="flex items-center gap-1 hover:opacity-80 transition-opacity text-xs font-semibold"
+            >
+              <span>Press Esc or click to exit</span>
+              <X className="size-3.5 ml-1" />
+            </button>
+          </div>
+        )}
+
+        <CardHeader className={isExtended ? "pb-3 shrink-0" : undefined}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="size-5 text-amber-500" />
+              <div>
+                <CardTitle className="text-base text-amber-700 dark:text-amber-300">
+                  Data Quality Issues — Households Missing SEC or MOSR
+                </CardTitle>
+                <CardDescription>
+                  {rows.length} household{rows.length !== 1 ? "s" : ""} missing SEC or MOSR classification data.
+                </CardDescription>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <div className="relative w-44">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder="Filter HHID or Region..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-8 pl-8 text-xs bg-background"
+                />
+              </div>
+
+              <Button
+                type="button"
+                variant={isExtended ? "default" : "outline"}
+                size="sm"
+                onClick={() => setIsExtended(!isExtended)}
+                className={`h-8 gap-1.5 text-xs font-medium ${
+                  isExtended ? "bg-amber-600 text-white" : ""
+                }`}
+                title={isExtended ? "Exit Extended View (Esc)" : "Expand into Extended View"}
+              >
+                {isExtended ? (
+                  <>
+                    <Minimize2 className="size-3.5" />
+                    <span>Exit Extended</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="size-3.5" />
+                    <span>Extended View</span>
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className={isExtended ? "flex-1 overflow-hidden flex flex-col p-4 sm:p-6" : undefined}>
+          <div className={`overflow-x-auto rounded-md border bg-card ${
+            isExtended ? "flex-1 overflow-y-auto" : "max-h-96 overflow-y-auto"
+          }`}>
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-muted text-xs uppercase tracking-wider text-muted-foreground z-10 shadow-xs">
+                <tr className="border-b">
+                  <th className="px-4 py-3 text-left font-medium">HHID</th>
+                  <th className="px-4 py-3 text-left font-medium">Region</th>
+                  <th className="px-4 py-3 text-center font-medium">SEC</th>
+                  <th className="px-4 py-3 text-center font-medium">MOSR</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filteredRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-xs text-muted-foreground italic">
+                      No matching unclassified households found.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRows.map((row, idx) => (
+                    <tr key={row.hhid || row.id || idx} className="hover:bg-muted/30">
+                      <td className="px-4 py-2 font-mono text-xs">{nullDisplay(row.hhid)}</td>
+                      <td className="px-4 py-2">{nullDisplay(row.region_name || row.region)}</td>
+                      <td className="px-4 py-2 text-center">{nullDisplay(row.sec)}</td>
+                      <td className="px-4 py-2 text-center">{nullDisplay(row.mosr)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
@@ -1607,6 +1865,7 @@ function TargetQuotaTable({
   onRegionClick?: (regionCode: number) => void;
 }) {
   const { rows, totalRow } = getGroupedInstalledHouseholdsData(regions);
+  const [isExtended, setIsExtended] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [copied, setCopied] = useState(false);
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -1619,6 +1878,20 @@ function TargetQuotaTable({
     regionTarget: number;
     colTarget: number;
   } | null>(null);
+
+  useEffect(() => {
+    if (!isExtended) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsExtended(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isExtended]);
 
   // Filter rows
   const filteredRows = rows.filter((r) =>
@@ -1757,75 +2030,130 @@ function TargetQuotaTable({
   };
 
   return (
-    <Card className="overflow-hidden border border-border shadow-sm">
-      {/* Top Toolbar */}
-      <div className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between border-b bg-muted/20">
-        <div className="flex items-center gap-2.5">
-          <Target className="size-5 text-indigo-600 dark:text-indigo-400" />
-          <div>
+    <>
+      {isExtended && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity"
+          onClick={() => setIsExtended(false)}
+        />
+      )}
+      <Card
+        className={`overflow-hidden border border-border shadow-sm transition-all duration-200 ${
+          isExtended
+            ? "fixed inset-2 sm:inset-4 md:inset-6 z-50 flex flex-col bg-card shadow-2xl rounded-xl border-2 border-indigo-500/40"
+            : ""
+        }`}
+      >
+        {isExtended && (
+          <div className="flex items-center justify-between px-4 py-2 bg-indigo-700 text-white text-xs font-medium shrink-0">
             <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-foreground text-sm md:text-base">
-                Target Quota Table
-              </h3>
-              <span className="rounded-full bg-indigo-100 dark:bg-indigo-950 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-800 dark:text-indigo-300">
-                {num(totalRow.grand_target)} Master Target
-              </span>
+              <Maximize2 className="size-3.5" />
+              <span className="font-semibold">Target Quota Matrix (Extended View)</span>
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Master target quota allocation by Region, SEC (1–3), and MOSR (1–4)
-            </p>
+            <button
+              type="button"
+              onClick={() => setIsExtended(false)}
+              className="flex items-center gap-1 hover:text-indigo-200 transition-colors text-xs font-semibold"
+            >
+              <span>Press Esc or click to exit</span>
+              <X className="size-3.5 ml-1" />
+            </button>
+          </div>
+        )}
+
+        {/* Top Toolbar */}
+        <div className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between border-b bg-muted/20 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <Target className="size-5 text-indigo-600 dark:text-indigo-400" />
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-foreground text-sm md:text-base">
+                  Target Quota Table
+                </h3>
+                <span className="rounded-full bg-indigo-100 dark:bg-indigo-950 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-800 dark:text-indigo-300">
+                  {num(totalRow.grand_target)} Master Target
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Master target quota allocation by Region, SEC (1–3), and MOSR (1–4)
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="relative w-40 md:w-48">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Filter region..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-8 pl-8 text-xs bg-background"
+              />
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleCopyTSV}
+              className="h-8 gap-1 text-xs"
+              title="Copy as TSV to paste directly into Microsoft Excel or Google Sheets"
+            >
+              {copied ? (
+                <>
+                  <Check className="size-3.5 text-emerald-600" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="size-3.5" />
+                  <span className="hidden sm:inline">Copy</span>
+                </>
+              )}
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleExportCSV}
+              className="h-8 gap-1 text-xs"
+              title="Download CSV spreadsheet"
+            >
+              <Download className="size-3.5" />
+              <span className="hidden sm:inline">CSV</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant={isExtended ? "default" : "outline"}
+              size="sm"
+              onClick={() => setIsExtended(!isExtended)}
+              className={`h-8 gap-1.5 text-xs font-medium transition-colors ${
+                isExtended
+                  ? "bg-indigo-600 hover:bg-indigo-700 text-white"
+                  : ""
+              }`}
+              title={isExtended ? "Exit Extended View (Esc)" : "Expand table into full-screen extended view"}
+            >
+              {isExtended ? (
+                <>
+                  <Minimize2 className="size-3.5" />
+                  <span>Exit Extended</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="size-3.5" />
+                  <span>Extended View</span>
+                </>
+              )}
+            </Button>
           </div>
         </div>
-
-        <div className="flex items-center gap-2">
-          <div className="relative w-40 md:w-48">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="Filter region..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 pl-8 text-xs bg-background"
-            />
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleCopyTSV}
-            className="h-8 gap-1 text-xs"
-            title="Copy as TSV to paste directly into Microsoft Excel or Google Sheets"
-          >
-            {copied ? (
-              <>
-                <Check className="size-3.5 text-emerald-600" />
-                <span>Copied!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="size-3.5" />
-                <span className="hidden sm:inline">Copy</span>
-              </>
-            )}
-          </Button>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleExportCSV}
-            className="h-8 gap-1 text-xs"
-            title="Download CSV spreadsheet"
-          >
-            <Download className="size-3.5" />
-            <span className="hidden sm:inline">CSV</span>
-          </Button>
-        </div>
-      </div>
 
       {/* Dynamic Hover Banner */}
-      <div className="min-h-[30px] border-b bg-slate-50 dark:bg-slate-900/60 px-4 py-1.5 text-xs text-muted-foreground flex items-center justify-between">
+      <div className="min-h-[30px] border-b bg-slate-50 dark:bg-slate-900/60 px-4 py-1.5 text-xs text-muted-foreground flex items-center justify-between shrink-0">
         {hoveredCell ? (
           <div className="flex items-center gap-2 truncate text-foreground animate-in fade-in duration-150">
             <span className="inline-block size-2 rounded-full bg-indigo-500 animate-pulse" />
@@ -1859,9 +2187,9 @@ function TargetQuotaTable({
       </div>
 
       {/* Table Container */}
-      <div className="overflow-x-auto">
+      <div className={`overflow-x-auto ${isExtended ? "flex-1 overflow-y-auto" : ""}`}>
         <table className="w-full min-w-[960px] border-collapse text-xs font-sans">
-          <thead>
+          <thead className={isExtended ? "sticky top-0 z-30 shadow-xs" : undefined}>
             {/* Title Banner spanning all 17 columns */}
             <tr>
               <th
@@ -2113,7 +2441,8 @@ function TargetQuotaTable({
         </table>
       </div>
     </Card>
-  );
+  </>
+);
 }
 
 type MatrixMetric = "installed" | "target" | "shortfall" | "fulfillment";
@@ -2133,6 +2462,7 @@ function InstalledHouseholdsTable({
   onRegionClick?: (regionCode: number) => void;
 }) {
   const { rows, totalRow } = getGroupedInstalledHouseholdsData(regions);
+  const [isExtended, setIsExtended] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [displayMetric, setDisplayMetric] = useState<MatrixMetric>("installed");
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
@@ -2150,6 +2480,20 @@ function InstalledHouseholdsTable({
     regionTotal: number;
     colTotal: number;
   } | null>(null);
+
+  useEffect(() => {
+    if (!isExtended) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsExtended(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isExtended]);
 
   // Filter rows
   const filteredRows = rows.filter((r) =>
@@ -2359,9 +2703,39 @@ function InstalledHouseholdsTable({
   };
 
   return (
-    <Card className="overflow-hidden border border-border shadow-sm">
-      {/* 1. Creative Executive Insights Strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-3.5 bg-gradient-to-r from-muted/50 via-muted/20 to-muted/50 border-b text-xs">
+    <>
+      {isExtended && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity"
+          onClick={() => setIsExtended(false)}
+        />
+      )}
+      <Card
+        className={`overflow-hidden border border-border shadow-sm transition-all duration-200 ${
+          isExtended
+            ? "fixed inset-2 sm:inset-4 md:inset-6 z-50 flex flex-col bg-card shadow-2xl rounded-xl border-2 border-blue-500/40"
+            : ""
+        }`}
+      >
+        {isExtended && (
+          <div className="flex items-center justify-between px-4 py-2 bg-blue-700 text-white text-xs font-medium shrink-0">
+            <div className="flex items-center gap-2">
+              <Maximize2 className="size-3.5" />
+              <span className="font-semibold">Installed Households Matrix (Extended View — {displayMetric.toUpperCase()})</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsExtended(false)}
+              className="flex items-center gap-1 hover:text-blue-200 transition-colors text-xs font-semibold"
+            >
+              <span>Press Esc or click to exit</span>
+              <X className="size-3.5 ml-1" />
+            </button>
+          </div>
+        )}
+
+        {/* 1. Creative Executive Insights Strip */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-3.5 bg-gradient-to-r from-muted/50 via-muted/20 to-muted/50 border-b text-xs shrink-0">
         <div className="flex items-center gap-2.5 rounded-lg border bg-background/80 p-2.5 shadow-2xs">
           <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
             <Building2 className="size-4" />
@@ -2412,7 +2786,7 @@ function InstalledHouseholdsTable({
       </div>
 
       {/* 2. Top Interactive Toolbar */}
-      <div className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between border-b bg-background">
+      <div className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between border-b bg-background shrink-0">
         {/* Metric Selector Tabs */}
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] font-semibold text-muted-foreground uppercase mr-1">
@@ -2526,6 +2900,36 @@ function InstalledHouseholdsTable({
             <Download className="size-3.5" />
             <span className="hidden sm:inline">CSV</span>
           </Button>
+
+          {/* Extended View Toggle */}
+          <Button
+            type="button"
+            variant={isExtended ? "default" : "outline"}
+            size="sm"
+            onClick={() => setIsExtended(!isExtended)}
+            className={`h-8 gap-1.5 text-xs font-medium transition-colors ${
+              isExtended
+                ? "bg-blue-600 hover:bg-blue-700 text-white"
+                : ""
+            }`}
+            title={
+              isExtended
+                ? "Exit Extended View (Esc)"
+                : "Expand table into full-screen extended view"
+            }
+          >
+            {isExtended ? (
+              <>
+                <Minimize2 className="size-3.5" />
+                <span>Exit Extended</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="size-3.5" />
+                <span>Extended View</span>
+              </>
+            )}
+          </Button>
         </div>
       </div>
 
@@ -2567,9 +2971,13 @@ function InstalledHouseholdsTable({
       </div>
 
       {/* 4. Exact 17-Column Table Structure */}
-      <div className="overflow-x-auto">
+      <div
+        className={`overflow-x-auto ${
+          isExtended ? "flex-1 min-h-0 overflow-y-auto" : ""
+        }`}
+      >
         <table className="w-full min-w-[960px] border-collapse text-xs font-sans">
-          <thead>
+          <thead className={isExtended ? "sticky top-0 z-30 shadow-xs" : undefined}>
             {/* Title Banner spanning all 17 columns */}
             <tr>
               <th
@@ -2832,7 +3240,8 @@ function InstalledHouseholdsTable({
         </table>
       </div>
     </Card>
-  );
+  </>
+);
 }
 
 // ─── Helper Functions for Matrix Formats ──────────────────────────────────────
