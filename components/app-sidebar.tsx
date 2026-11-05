@@ -179,6 +179,17 @@ export function AppSidebar({
 
               <SidebarMenuItem>
                 <SidebarMenuButton
+                  render={<Link href="/dashboard/panel/demographics" />}
+                  isActive={pathname.startsWith("/dashboard/panel/demographics")}
+                  tooltip="Demographics"
+                >
+                  <Users />
+                  <span>Demographics</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
                   render={<Link href="/dashboard/panel/updates" />}
                   isActive={pathname.startsWith("/dashboard/panel/updates")}
                   tooltip="Panel Updates"
