@@ -2,18 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
   Archive,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Clock,
   Loader2,
   RefreshCw,
   Shield,
-  Trash2,
   Users,
-  XCircle,
+  Search,
+  Calendar,
+  MapPin,
+  Clock,
+  Trash2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import {
@@ -41,14 +42,11 @@ export type PanelUpdateRow = {
   sec?: number | null;
   environment?: string | null;
   is_rejected?: boolean | null;
-  sla_deadline?: string | null;
-  sla_breached?: boolean | null;
   recorded_at?: string | null;
   member_count?: number | null;
   members?: PanelMemberDetail[];
 };
 
-type StatusFilter = "ALL" | "UNASSIGNED" | "DEINSTALLED" | "RETIRED";
 type SortField = "recorded_at" | "hhid" | "region" | "sec" | "mos" | "member_count";
 type SortDir = "asc" | "desc";
 
@@ -56,39 +54,34 @@ type SortDir = "asc" | "desc";
 
 const STATUS_META: Record<
   string,
-  { label: string; color: string; bg: string; icon: React.ReactNode; slaLabel?: string }
+  { label: string; color: string; bg: string; icon: React.ReactNode }
 > = {
-  UNASSIGNED: {
-    label: "Unassigned",
-    color: "text-orange-700 dark:text-orange-400",
-    bg: "bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700",
-    icon: <Clock className="size-3" />,
-    slaLabel: "→ Deinstalled in",
+  RETIRED: {
+    label: "Retired",
+    color: "text-slate-700 dark:text-slate-300",
+    bg: "bg-slate-100 dark:bg-slate-800/80 border-slate-300 dark:border-slate-700",
+    icon: <Archive className="size-3" />,
   },
   DEINSTALLED: {
     label: "Deinstalled",
     color: "text-red-700 dark:text-red-400",
     bg: "bg-red-100 dark:bg-red-900/30 border-red-300 dark:border-red-700",
     icon: <Trash2 className="size-3" />,
-    slaLabel: "→ Retired in",
   },
-  RETIRED: {
-    label: "Retired",
-    color: "text-slate-600 dark:text-slate-400",
-    bg: "bg-slate-100 dark:bg-slate-800/60 border-slate-300 dark:border-slate-600",
-    icon: <Archive className="size-3" />,
+  UNASSIGNED: {
+    label: "Unassigned",
+    color: "text-amber-700 dark:text-amber-400",
+    bg: "bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700",
+    icon: <Clock className="size-3" />,
   },
 };
 
 /* ─────────────────────── Helpers ─────────────────────── */
 
-function formatDate(value?: string | null, short = false) {
+function formatDate(value?: string | null) {
   if (!value) return "—";
   try {
     const d = new Date(value);
-    if (short) {
-      return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-    }
     return d.toLocaleString("en-GB", {
       day: "2-digit",
       month: "short",
@@ -101,21 +94,9 @@ function formatDate(value?: string | null, short = false) {
   }
 }
 
-function getDaysRemaining(deadline?: string | null): number | null {
-  if (!deadline) return null;
-  const diff = new Date(deadline).getTime() - Date.now();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
-}
-
-function getDaysSince(recorded?: string | null): number {
-  if (!recorded) return 0;
-  const diff = Date.now() - new Date(recorded).getTime();
-  return Math.floor(diff / (1000 * 60 * 60 * 24));
-}
-
 function genderSummary(members: PanelMemberDetail[]) {
-  const m = members.filter((x) => x.gender?.toUpperCase() === "M").length;
-  const f = members.filter((x) => x.gender?.toUpperCase() === "F").length;
+  const m = members.filter((x) => x.gender?.toUpperCase() === "M" || x.gender?.toLowerCase() === "male").length;
+  const f = members.filter((x) => x.gender?.toUpperCase() === "F" || x.gender?.toLowerCase() === "female").length;
   const other = members.length - m - f;
   const parts: string[] = [];
   if (m) parts.push(`${m}M`);
@@ -125,7 +106,7 @@ function genderSummary(members: PanelMemberDetail[]) {
 }
 
 function ageSummary(members: PanelMemberDetail[]) {
-  const ages = members.map((x) => x.age).filter((a): a is number => a !== null && a !== undefined);
+  const ages = members.map((x) => x.age).filter((a): a is number => a !== null && a !== undefined && !isNaN(a));
   if (!ages.length) return "—";
   const avg = Math.round(ages.reduce((s, a) => s + a, 0) / ages.length);
   const min = Math.min(...ages);
@@ -144,43 +125,10 @@ function StatusBadge({ status }: { status: string }) {
   };
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-none ${meta.color} ${meta.bg}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold leading-none ${meta.color} ${meta.bg}`}
     >
       {meta.icon}
       {meta.label}
-    </span>
-  );
-}
-
-function SlaTag({ row }: { row: PanelUpdateRow }) {
-  const days = getDaysRemaining(row.sla_deadline);
-  const meta = STATUS_META[row.current_status];
-  if (!meta?.slaLabel || days === null) return null;
-
-  if (row.sla_breached || days < 0) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 dark:bg-red-900/40 border border-red-300 dark:border-red-700 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:text-red-400">
-        <XCircle className="size-3" /> SLA breached
-      </span>
-    );
-  }
-  if (days === 0) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 dark:bg-orange-900/40 border border-orange-300 dark:border-orange-700 px-2 py-0.5 text-[10px] font-semibold text-orange-700 dark:text-orange-400">
-        <AlertTriangle className="size-3" /> Due today
-      </span>
-    );
-  }
-  const urgency =
-    days <= 1
-      ? "text-red-600 dark:text-red-400 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20"
-      : days <= 3
-      ? "text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-900/20"
-      : "text-muted-foreground border-border bg-muted/50";
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${urgency}`}>
-      <Clock className="size-2.5" />
-      {meta.slaLabel} {days}d
     </span>
   );
 }
@@ -190,50 +138,60 @@ function ExpandedMemberRow({ row }: { row: PanelUpdateRow }) {
   if (!members.length) {
     return (
       <tr>
-        <td colSpan={7} className="px-4 py-3 text-sm text-muted-foreground italic">
-          No member details available for this HHID.
+        <td colSpan={8} className="px-6 py-4 text-xs text-muted-foreground italic bg-muted/20">
+          No individual member records found for this household.
         </td>
       </tr>
     );
   }
   return (
     <tr>
-      <td colSpan={7} className="bg-muted/30 px-6 py-4">
-        <div className="grid grid-cols-[auto_1fr] gap-4 items-start">
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-1">
-            Members
+      <td colSpan={8} className="bg-muted/30 px-6 py-4 border-b">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Household Members Profile ({members.length})
+            </span>
+            <span className="text-xs font-mono text-muted-foreground">
+              HHID: {row.hhid} • Region: {row.region || "Unknown"}
+            </span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs border-separate border-spacing-y-0.5">
-              <thead>
-                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  <th className="text-left px-2 py-1">#</th>
-                  <th className="text-left px-2 py-1">Member Code</th>
-                  <th className="text-left px-2 py-1">Gender</th>
-                  <th className="text-left px-2 py-1">Age</th>
+
+          <div className="overflow-x-auto rounded-lg border bg-background">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50 text-[10px] uppercase tracking-wider text-muted-foreground border-b">
+                <tr>
+                  <th className="text-left px-3 py-2">#</th>
+                  <th className="text-left px-3 py-2">Member Code</th>
+                  <th className="text-left px-3 py-2">Gender</th>
+                  <th className="text-left px-3 py-2">Age</th>
                 </tr>
               </thead>
-              <tbody>
-                {members.map((m: PanelMemberDetail, idx: number) => (
-                  <tr key={idx} className="rounded-md">
-                    <td className="px-2 py-1 text-muted-foreground">{idx + 1}</td>
-                    <td className="px-2 py-1 font-mono font-medium">{m.member_code ?? "—"}</td>
-                    <td className="px-2 py-1">
-                      <span
-                        className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                          m.gender?.toUpperCase() === "M"
-                            ? "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
-                            : m.gender?.toUpperCase() === "F"
-                            ? "bg-pink-100 dark:bg-pink-900/40 text-pink-700 dark:text-pink-300"
-                            : "bg-muted text-muted-foreground"
-                        }`}
-                      >
-                        {m.gender ?? "?"}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1">{m.age ?? "—"}</td>
-                  </tr>
-                ))}
+              <tbody className="divide-y divide-border">
+                {members.map((m: PanelMemberDetail, idx: number) => {
+                  const isMale = m.gender?.toUpperCase() === "M" || m.gender?.toLowerCase() === "male";
+                  const isFemale = m.gender?.toUpperCase() === "F" || m.gender?.toLowerCase() === "female";
+                  return (
+                    <tr key={idx} className="hover:bg-muted/10 transition-colors">
+                      <td className="px-3 py-2 text-muted-foreground font-mono">{idx + 1}</td>
+                      <td className="px-3 py-2 font-mono font-medium text-foreground">{m.member_code ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {isMale ? (
+                          <span className="inline-flex items-center gap-1 rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                            <span className="size-1 rounded-full bg-blue-600" /> Male
+                          </span>
+                        ) : isFemale ? (
+                          <span className="inline-flex items-center gap-1 rounded bg-teal-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-teal-600 dark:text-teal-400">
+                            <span className="size-1 rounded-full bg-teal-600" /> Female
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">{m.gender || "—"}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-semibold text-foreground">{m.age ?? "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -249,11 +207,12 @@ export default function PanelUpdatesPage() {
   const [rows, setRows] = useState<PanelUpdateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<StatusFilter>("ALL");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [sortField, setSortField] = useState<SortField>("recorded_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [envFilter, setEnvFilter] = useState<string>("ALL");
 
   const loadUpdates = async () => {
     setLoading(true);
@@ -275,18 +234,35 @@ export default function PanelUpdatesPage() {
 
   /* ── Stats ── */
   const stats = useMemo(() => {
-    const unassigned = rows.filter((r) => r.current_status === "UNASSIGNED");
-    const deinstalled = rows.filter((r) => r.current_status === "DEINSTALLED");
     const retired = rows.filter((r) => r.current_status === "RETIRED");
-    const slaBreached = rows.filter((r) => r.sla_breached || getDaysRemaining(r.sla_deadline) !== null && (getDaysRemaining(r.sla_deadline) ?? 1) < 0);
-    const dueToday = rows.filter((r) => getDaysRemaining(r.sla_deadline) === 0);
-    return { total: rows.length, unassigned: unassigned.length, deinstalled: deinstalled.length, retired: retired.length, slaBreached: slaBreached.length, dueToday: dueToday.length };
+    const totalMembersAffected = rows.reduce(
+      (sum, r) => sum + (r.member_count ?? r.members?.length ?? 0),
+      0
+    );
+    const uniqueRegions = new Set(rows.map((r) => r.region).filter(Boolean)).size;
+    const prodCount = rows.filter((r) => r.environment?.toUpperCase() === "PROD").length;
+
+    return {
+      total: rows.length,
+      retired: retired.length,
+      membersAffected: totalMembersAffected,
+      uniqueRegions,
+      prodCount,
+    };
   }, [rows]);
 
   /* ── Filtered + Sorted ── */
   const displayRows = useMemo(() => {
     let filtered = rows;
-    if (activeTab !== "ALL") filtered = filtered.filter((r) => r.current_status === activeTab);
+
+    if (statusFilter !== "ALL") {
+      filtered = filtered.filter((r) => r.current_status === statusFilter);
+    }
+
+    if (envFilter !== "ALL") {
+      filtered = filtered.filter((r) => r.environment?.toUpperCase() === envFilter.toUpperCase());
+    }
+
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       filtered = filtered.filter(
@@ -297,13 +273,14 @@ export default function PanelUpdatesPage() {
           String(r.mos ?? "").includes(q)
       );
     }
+
     return [...filtered].sort((a, b) => {
       let av: string | number = 0;
       let bv: string | number = 0;
       switch (sortField) {
         case "recorded_at":
-          av = a.recorded_at ?? "";
-          bv = b.recorded_at ?? "";
+          av = a.recorded_at ? new Date(a.recorded_at).getTime() : 0;
+          bv = b.recorded_at ? new Date(b.recorded_at).getTime() : 0;
           break;
         case "hhid":
           av = a.hhid ?? "";
@@ -329,11 +306,15 @@ export default function PanelUpdatesPage() {
       const cmp = av < bv ? -1 : av > bv ? 1 : 0;
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [rows, activeTab, search, sortField, sortDir]);
+  }, [rows, statusFilter, envFilter, search, sortField, sortDir]);
 
   const handleSort = (field: SortField) => {
-    if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortField(field); setSortDir("desc"); }
+    if (sortField === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("desc");
+    }
   };
 
   const SortIcon = ({ field }: { field: SortField }) => {
@@ -341,116 +322,171 @@ export default function PanelUpdatesPage() {
     return sortDir === "asc" ? <ChevronUp className="size-3 text-primary" /> : <ChevronDown className="size-3 text-primary" />;
   };
 
-  const tabs: { key: StatusFilter; label: string; count: number }[] = [
-    { key: "ALL", label: "All", count: stats.total },
-    { key: "UNASSIGNED", label: "Unassigned", count: stats.unassigned },
-    { key: "DEINSTALLED", label: "Deinstalled", count: stats.deinstalled },
-    { key: "RETIRED", label: "Retired", count: stats.retired },
-  ];
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-12 font-sans">
       {/* ── Header ── */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between border-b pb-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Shield className="size-5 text-red-500" />
-            Panel Updates
-          </h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+              Panel Updates (Retired Households)
+            </h1>
+            <span className="rounded-full bg-slate-500/10 px-2.5 py-0.5 text-xs font-semibold text-slate-700 dark:text-slate-300 border border-slate-500/20">
+              RETIRED Tracking
+            </span>
+          </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Households removed from active stages — track lifecycle, SLA deadlines and member details.
+            Historical lifecycle logs of retired panel households and corresponding member details.
           </p>
         </div>
+
         <button
           type="button"
           onClick={() => void loadUpdates()}
           disabled={loading}
-          className="inline-flex items-center gap-1.5 self-start rounded-md border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50 sm:self-auto"
+          className="inline-flex items-center gap-1.5 self-start rounded-lg border bg-card px-3.5 py-2 text-xs font-semibold text-card-foreground shadow-sm hover:bg-accent transition-colors disabled:opacity-50 sm:self-auto"
         >
           <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-          Refresh
+          Refresh Updates
         </button>
       </div>
 
-      {/* ── Error ── */}
+      {/* ── Error Banner ── */}
       {error && (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          <p className="font-medium">Unable to load panel updates.</p>
-          <p className="mt-1">{error}</p>
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          <p className="font-semibold">Unable to load panel updates.</p>
+          <p className="mt-1 text-xs text-muted-foreground">{error}</p>
         </div>
       )}
+
+      {/* ── Metric Summary Cards ── */}
+      <div className="flex flex-wrap items-center gap-3">
+        <Card className="w-[160px] sm:w-[175px] shrink-0 shadow-sm border-border">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 pb-1">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Total Records</CardTitle>
+            <Archive className="size-3.5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            <div className="text-xl font-bold text-foreground">{stats.total.toLocaleString()}</div>
+            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">Logged in updates</p>
+          </CardContent>
+        </Card>
+
+        <Card className="w-[160px] sm:w-[175px] shrink-0 shadow-sm border-border">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 pb-1">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Retired Status</CardTitle>
+            <Shield className="size-3.5 text-slate-500" />
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            <div className="text-xl font-bold text-slate-700 dark:text-slate-300">
+              {stats.retired.toLocaleString()}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">Status = RETIRED</p>
+          </CardContent>
+        </Card>
+
+        <Card className="w-[160px] sm:w-[175px] shrink-0 shadow-sm border-border">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 pb-1">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Members Logged</CardTitle>
+            <Users className="size-3.5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            <div className="text-xl font-bold text-foreground">
+              {stats.membersAffected.toLocaleString()}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">Individual profiles</p>
+          </CardContent>
+        </Card>
+
+        <Card className="w-[160px] sm:w-[175px] shrink-0 shadow-sm border-border">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 pb-1">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Regions</CardTitle>
+            <MapPin className="size-3.5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            <div className="text-xl font-bold text-foreground">{stats.uniqueRegions}</div>
+            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">Armenian regions</p>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* ── Table Card ── */}
       {loading ? (
         <div className="flex min-h-60 flex-col items-center justify-center gap-2">
           <Loader2 className="size-6 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Loading panel updates...</p>
+          <p className="text-sm text-muted-foreground">Loading updates from RDS...</p>
         </div>
       ) : (
-        <Card>
+        <Card className="shadow-sm">
           <CardHeader className="pb-3 border-b">
-            {/* Tabs + Search */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex gap-1 overflow-x-auto">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.key}
-                    onClick={() => setActiveTab(tab.key)}
-                    className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
-                      activeTab === tab.key
-                        ? "bg-primary text-primary-foreground"
-                        : "hover:bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {tab.label}
-                    <span
-                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                        activeTab === tab.key
-                          ? "bg-primary-foreground/20 text-primary-foreground"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {tab.count}
-                    </span>
-                  </button>
-                ))}
+              {/* Search & Environment Filters */}
+              <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="Search HHID, region, SEC, MOS…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="h-8 w-full rounded-lg border bg-background pl-8 pr-3 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="h-8 rounded-lg border bg-background px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="ALL">All Statuses ({rows.length})</option>
+                  <option value="RETIRED">Retired Only ({stats.retired})</option>
+                  <option value="DEINSTALLED">Deinstalled</option>
+                  <option value="UNASSIGNED">Unassigned</option>
+                </select>
+
+                <select
+                  value={envFilter}
+                  onChange={(e) => setEnvFilter(e.target.value)}
+                  className="h-8 rounded-lg border bg-background px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="ALL">All Environments</option>
+                  <option value="PROD">PROD</option>
+                  <option value="DEV">DEV</option>
+                </select>
               </div>
-              <input
-                type="text"
-                placeholder="Search HHID, region, SEC, MOSR…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="h-8 rounded-md border bg-transparent px-3 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring sm:w-56"
-              />
+
+              <span className="text-xs text-muted-foreground font-mono self-end sm:self-auto">
+                Showing {displayRows.length} of {rows.length} records
+              </span>
             </div>
           </CardHeader>
 
           <CardContent className="p-0">
             {displayRows.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-                <CheckCircle2 className="size-8 text-emerald-500" />
+                <CheckCircle2 className="size-8 text-muted-foreground/60" />
                 <p className="text-sm font-medium">No records found</p>
-                <p className="text-xs">{search ? "Try a different search." : "No households in this status."}</p>
+                <p className="text-xs">{search ? "Try adjusting your search criteria." : "No households logged in this status."}</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-muted/50 text-[11px] uppercase tracking-wide text-muted-foreground">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground border-b">
                     <tr>
-                      {/* Expand toggle */}
-                      <th className="w-8 px-2 py-2.5" />
+                      <th className="w-8 px-2 py-3" />
                       {(
                         [
                           { field: "hhid" as SortField, label: "HHID" },
                           { field: "region" as SortField, label: "Region" },
                           { field: "sec" as SortField, label: "SEC" },
-                          { field: "mos" as SortField, label: "MOSR" },
+                          { field: "mos" as SortField, label: "MOS" },
                           { field: "member_count" as SortField, label: "Members" },
+                          { field: "recorded_at" as SortField, label: "Recorded At" },
                         ] as { field: SortField; label: string }[]
                       ).map((col) => (
                         <th
                           key={col.field}
-                          className="px-3 py-2.5 font-semibold cursor-pointer select-none whitespace-nowrap"
+                          className="px-3.5 py-3 font-semibold cursor-pointer select-none whitespace-nowrap hover:text-foreground transition-colors"
                           onClick={() => handleSort(col.field)}
                         >
                           <span className="inline-flex items-center gap-1">
@@ -459,7 +495,8 @@ export default function PanelUpdatesPage() {
                           </span>
                         </th>
                       ))}
-                      <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Status</th>
+                      <th className="px-3.5 py-3 font-semibold whitespace-nowrap">Status</th>
+                      <th className="px-3.5 py-3 font-semibold whitespace-nowrap">Env</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -469,15 +506,14 @@ export default function PanelUpdatesPage() {
                       const isExpanded = expandedId === row.id;
 
                       return (
-                        <>
+                        <tr key={row.id} className="contents">
                           <tr
-                            key={row.id}
                             className={`group align-middle transition-colors ${
                               isExpanded ? "bg-muted/30" : "hover:bg-muted/20"
                             }`}
                           >
-                            {/* Expand button */}
-                            <td className="px-2 py-3 w-8">
+                            {/* Expand toggle */}
+                            <td className="px-2 py-3 w-8 text-center">
                               <button
                                 type="button"
                                 onClick={() => setExpandedId(isExpanded ? null : row.id)}
@@ -487,36 +523,54 @@ export default function PanelUpdatesPage() {
                                 {isExpanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                               </button>
                             </td>
-                            <td className="px-3 py-3 font-mono font-semibold text-xs tracking-wide">{row.hhid}</td>
-                            <td className="px-3 py-3 text-xs">{row.region || "—"}</td>
-                            <td className="px-3 py-3 text-xs text-center">{row.sec ?? "—"}</td>
-                            <td className="px-3 py-3 text-xs text-center">{row.mos ?? "—"}</td>
-                            <td className="px-3 py-3">
+                            <td className="px-3.5 py-3 font-mono font-semibold text-xs tracking-wide text-foreground">
+                              {row.hhid}
+                            </td>
+                            <td className="px-3.5 py-3 text-xs text-foreground font-medium">
+                              {row.region || "—"}
+                            </td>
+                            <td className="px-3.5 py-3 text-xs text-center font-mono">
+                              {row.sec ?? "—"}
+                            </td>
+                            <td className="px-3.5 py-3 text-xs text-center font-mono">
+                              {row.mos ?? "—"}
+                            </td>
+                            <td className="px-3.5 py-3">
                               {memberCount > 0 ? (
-                                <div className="flex flex-col gap-1">
-                                  <span className="inline-flex items-center gap-1 text-xs font-medium">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-foreground">
                                     <Users className="size-3 text-muted-foreground" />
                                     {memberCount} member{memberCount !== 1 ? "s" : ""}
                                   </span>
                                   {members.length > 0 && (
-                                    <div className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
-                                      <span>{genderSummary(members)}</span>
-                                      <span className="text-[9px]">Age: {ageSummary(members)}</span>
-                                    </div>
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {genderSummary(members)} • {ageSummary(members)}
+                                    </span>
                                   )}
                                 </div>
                               ) : (
                                 <span className="text-muted-foreground text-xs">—</span>
                               )}
                             </td>
-                            <td className="px-3 py-3">
+                            <td className="px-3.5 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1">
+                                <Calendar className="size-3 text-muted-foreground" />
+                                {formatDate(row.recorded_at)}
+                              </span>
+                            </td>
+                            <td className="px-3.5 py-3">
                               <StatusBadge status={row.current_status} />
                             </td>
+                            <td className="px-3.5 py-3 text-xs font-mono text-muted-foreground">
+                              {row.environment || "PROD"}
+                            </td>
                           </tr>
+
+                          {/* Expanded Member Details */}
                           {isExpanded && (
-                            <ExpandedMemberRow key={`${row.id}-exp`} row={row} />
+                            <ExpandedMemberRow row={row} />
                           )}
-                        </>
+                        </tr>
                       );
                     })}
                   </tbody>
@@ -524,12 +578,15 @@ export default function PanelUpdatesPage() {
               </div>
             )}
 
-            {/* Footer count */}
+            {/* Footer summary */}
             {displayRows.length > 0 && (
-              <div className="border-t px-4 py-2.5 text-xs text-muted-foreground">
-                Showing {displayRows.length} of {rows.length} records
-                {activeTab !== "ALL" && ` · filtered by ${activeTab}`}
-                {search && ` · search: "${search}"`}
+              <div className="border-t px-4 py-2.5 text-xs text-muted-foreground flex items-center justify-between">
+                <span>
+                  Showing {displayRows.length} of {rows.length} records
+                </span>
+                <span className="font-mono text-[11px]">
+                  RDS Database Source
+                </span>
               </div>
             )}
           </CardContent>
