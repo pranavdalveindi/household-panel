@@ -14,6 +14,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={cn("h-full antialiased font-sans")}>
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (() => {
+                try {
+                  const savedTheme = localStorage.getItem("indirex_theme");
+                  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+                  const isDark = savedTheme ? savedTheme === "dark" : prefersDark;
+                  document.documentElement.classList.toggle("dark", isDark);
+                  document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+                } catch (error) {
+                  document.documentElement.classList.remove("dark");
+                  document.documentElement.style.colorScheme = "light";
+                }
+              })();
+            `,
+          }}
+        />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link

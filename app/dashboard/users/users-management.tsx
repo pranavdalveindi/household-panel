@@ -21,6 +21,8 @@ import {
   ShieldCheck,
   Trash2,
   RefreshCw,
+  Power,
+  PowerOff,
 } from "lucide-react";
 
 import { api } from "@/lib/api";
@@ -40,6 +42,8 @@ type ManagedUser = {
   email: string | null;
   created_at: string | null;
   role: AppRole | null;
+  is_active?: boolean;
+  banned_until?: string | null;
 };
 
 function formatDate(value: string | null) {
@@ -136,6 +140,29 @@ export default function UsersManagement() {
       await loadUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update role.");
+    } finally {
+      setBusyUserId(null);
+    }
+  }
+
+  async function handleStatusToggle(user: ManagedUser) {
+    const nextActive = !(user.is_active ?? true);
+
+    setBusyUserId(user.id);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await api.updateUserStatus(user.id, nextActive);
+
+      setSuccess(
+        nextActive
+          ? `User ${user.email ?? "the account"} was activated.`
+          : `User ${user.email ?? "the account"} was deactivated.`
+      );
+      await loadUsers();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update account status.");
     } finally {
       setBusyUserId(null);
     }
@@ -371,15 +398,20 @@ export default function UsersManagement() {
                           <div className="flex justify-end gap-2">
                             <button
                               type="button"
-                              onClick={() => void handleRoleUpdate(user)}
-                              disabled={
-                                !draft ||
-                                draft === user.role ||
-                                busyUserId === user.id
-                              }
-                              className="rounded-md border px-3 py-2 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => void handleStatusToggle(user)}
+                              disabled={busyUserId === user.id}
+                              className={`inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs font-medium ${
+                                user.is_active === false
+                                  ? "border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/5"
+                                  : "border-amber-500/30 text-amber-600 hover:bg-amber-500/5"
+                              } disabled:cursor-not-allowed disabled:opacity-40`}
                             >
-                              Save Role
+                              {user.is_active === false ? (
+                                <Power className="size-3.5" />
+                              ) : (
+                                <PowerOff className="size-3.5" />
+                              )}
+                              {user.is_active === false ? "Activate" : "Deactivate"}
                             </button>
 
                             <button

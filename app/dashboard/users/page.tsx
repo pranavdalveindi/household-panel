@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import UsersManagement from "./users-management";
 
 export default function UsersPage() {
-  redirect("/dashboard/panel");
+  return <UsersManagement />;
 }

@@ -167,6 +167,12 @@ export const api = {
       body: JSON.stringify({ role }),
     }),
 
+  updateUserStatus: (id: string, active: boolean) =>
+    apiFetch(`/api/admin/users/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ active }),
+    }),
+
   deleteUser: (id: string) =>
     apiFetch(`/api/admin/users/${id}`, {
       method: 'DELETE',

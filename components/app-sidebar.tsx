@@ -15,6 +15,7 @@ import {
   Users,
   BarChart3,
   BellRing,
+  UserCog,
 } from "lucide-react";
 
 import { api } from "@/lib/api";
@@ -198,6 +199,19 @@ export function AppSidebar({
                   <span>Panel Updates</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+
+              {isAdmin && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    render={<Link href="/dashboard/users" />}
+                    isActive={pathname === "/dashboard/users" || pathname.startsWith("/dashboard/users/")}
+                    tooltip="User Management"
+                  >
+                    <UserCog />
+                    <span>Users</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

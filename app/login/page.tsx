@@ -27,32 +27,19 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">("light");
   const [currentYear, setCurrentYear] = useState<number>(2026);
 
-  // Initialize theme from localStorage or system preference
   useEffect(() => {
     setCurrentYear(new Date().getFullYear());
 
     const savedTheme = localStorage.getItem("indirex_theme") as "dark" | "light" | null;
-    if (savedTheme === "light" || savedTheme === "dark") {
-      setTheme(savedTheme);
-      if (savedTheme === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-    } else {
-      // Default to user's system preference or dark
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      const initial = prefersDark ? "dark" : "light";
-      setTheme(initial);
-      if (initial === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-    }
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const initialTheme = savedTheme === "light" || savedTheme === "dark" ? savedTheme : prefersDark ? "dark" : "light";
+
+    setTheme(initialTheme);
+    document.documentElement.classList.toggle("dark", initialTheme === "dark");
+    document.documentElement.style.colorScheme = initialTheme === "dark" ? "dark" : "light";
   }, []);
 
   const toggleTheme = () => {
@@ -65,6 +52,7 @@ export default function LoginPage() {
     } else {
       document.documentElement.classList.remove("dark");
     }
+    document.documentElement.style.colorScheme = nextTheme === "dark" ? "dark" : "light";
   };
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
@@ -106,7 +94,7 @@ export default function LoginPage() {
       {/* ========================================================
           THEME SWITCHER BUTTON (TOP RIGHT CORNER)
          ======================================================== */}
-      <div className="absolute top-6 right-6 z-50">
+      {/* <div className="absolute top-6 right-6 z-50">
         <button
           type="button"
           onClick={toggleTheme}
@@ -130,7 +118,7 @@ export default function LoginPage() {
             </>
           )}
         </button>
-      </div>
+      </div> */}
 
       {/* ========================================================
           LEFT PANEL: AUTHENTICATION FORM

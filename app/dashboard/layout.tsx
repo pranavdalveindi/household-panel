@@ -11,7 +11,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
-import { Loader2 } from "lucide-react";
 
 export type AuthUser = {
   id: string;
@@ -73,17 +72,6 @@ export default function DashboardLayout({
       });
   }, [router]);
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-2">
-          <Loader2 className="size-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Loading session...</p>
-        </div>
-      </div>
-    );
-  }
-
   const email = user?.email ?? "";
   const userName =
     user?.name || (email ? email.split("@")[0] : "User");
@@ -113,7 +101,7 @@ export default function DashboardLayout({
             </div>
           </header>
 
-          <main className="flex-1 bg-muted/30 p-3 sm:p-4 md:p-6">
+          <main className="relative flex-1 bg-muted/30 p-3 sm:p-4 md:p-6">
             <div className="w-full">{children}</div>
           </main>
         </SidebarInset>

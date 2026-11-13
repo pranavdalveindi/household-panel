@@ -203,7 +203,7 @@ export default function DemographicsPage() {
             </span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Standard population telemetry, age bracket distributions (-14, 15-30, 30-39, 40-49, 50-60, 60+), and gender balance.
+            Standard population telemetry, age bracket distributions (1-14, 15-30, 30-39, 40-49, 50-60, 60+), and gender balance.
           </p>
         </div>
 
@@ -313,7 +313,7 @@ export default function DemographicsPage() {
               <div>
                 <CardTitle className="text-base font-semibold">Members by Age Bracket</CardTitle>
                 <CardDescription className="text-xs mt-0.5">
-                  Distribution across brackets: -14, 15-30, 30-39, 40-49, 50-60, 60+
+                  Distribution across brackets: 1-14, 15-30, 30-39, 40-49, 50-60, 60+
                 </CardDescription>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium">
