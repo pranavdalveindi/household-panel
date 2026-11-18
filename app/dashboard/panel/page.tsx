@@ -55,9 +55,18 @@ type HeatmapCell = {
   sec: number;
   mosr: number;
   target: number;
+  production: number;
+  installed: number;
+  training: number;
+  total: number;
   live: number;
   shortfall: number;
   shortfall_pct: number;
+  households?: Array<{
+    hhid: string;
+    current_status: string;
+    region?: string | null;
+  }>;
 };
 
 type RegionBarData = {
@@ -83,7 +92,10 @@ type RegionCell = {
   target: number;
   live: number;
   shortfall: number;
-  shortfall_pct: number;
+  shortfall_pct?: number;
+  production?: number;
+  installed?: number;
+  training?: number;
 };
 
 type RegionDrillDownData = {
@@ -102,6 +114,9 @@ type UnclassifiedRow = {
   region_name?: string | null;
   sec: number | null;
   mosr: number | null;
+  current_status?: string | null;
+  issue_type?: 'NO_SEC' | 'NO_MOSR' | 'NO_SEC_AND_MOSR';
+  description?: string;
 };
 
 type RegionPreview = {
@@ -180,6 +195,7 @@ function SummaryCards({
   productionCount,
   installedCount,
   trainingCount,
+  onUnclassifiedClick,
 }: {
   totalTarget: number;
   totalLive: number;
@@ -188,6 +204,7 @@ function SummaryCards({
   productionCount: number;
   installedCount: number;
   trainingCount: number;
+  onUnclassifiedClick?: () => void;
 }) {
   return (
     <div  className="auto-rows-[160px] grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -268,7 +285,15 @@ function SummaryCards({
       </Card>
 
       {/* Unclassified Households (in amber with warning icon) */}
-      <Card className="border-amber-300 dark:border-amber-800">
+      <Card
+        onClick={onUnclassifiedClick}
+        className={`border-amber-300 dark:border-amber-800 transition-all ${
+          onUnclassifiedClick
+            ? "cursor-pointer hover:border-amber-500 hover:shadow-md hover:bg-amber-50/20 dark:hover:bg-amber-950/20"
+            : ""
+        }`}
+        title={onUnclassifiedClick ? "Click to view unclassified households missing SEC, MOSR, or both" : undefined}
+      >
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium text-amber-600 dark:text-amber-400">
             Unclassified
@@ -276,8 +301,13 @@ function SummaryCards({
           <AlertTriangle className="size-4 text-amber-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
-            {unclassifiedCount.toLocaleString()}
+          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 flex items-center justify-between">
+            <span>{unclassifiedCount.toLocaleString()}</span>
+            {onUnclassifiedClick && (
+              <span className="text-[10px] font-normal text-amber-700 dark:text-amber-300 underline">
+                View list →
+              </span>
+            )}
           </div>
           <CardDescription className="mt-1">Missing SEC or MOSR</CardDescription>
         </CardContent>
@@ -421,6 +451,8 @@ function HeatmapGridSection({
   onCellClick: (sec: number, mosr: number) => void;
 }) {
   const [isExtended, setIsExtended] = useState(false);
+  const [hhStatusFilter, setHhStatusFilter] = useState<"ALL" | "TRAINING" | "INSTALLED" | "PRODUCTION">("ALL");
+  const [hhSearch, setHhSearch] = useState("");
 
   useEffect(() => {
     if (!isExtended) return;
@@ -439,6 +471,27 @@ function HeatmapGridSection({
   function getCell(sec: number, mosr: number) {
     return cells.find((c) => Number(c.sec) === sec && Number(c.mosr) === mosr);
   }
+
+  const selectedCell = highlight ? getCell(highlight.sec, highlight.mosr) : null;
+  const rawHouseholds = selectedCell?.households || [];
+
+  const filteredHouseholds = useMemo(() => {
+    let list = rawHouseholds;
+    if (hhStatusFilter === "TRAINING") {
+      list = list.filter((h) => h.current_status.startsWith("TRAINING"));
+    } else if (hhStatusFilter === "INSTALLED") {
+      list = list.filter((h) => h.current_status === "INSTALLED");
+    } else if (hhStatusFilter === "PRODUCTION") {
+      list = list.filter((h) => h.current_status === "PRODUCTION");
+    }
+    if (hhSearch.trim()) {
+      const q = hhSearch.trim().toLowerCase();
+      list = list.filter(
+        (h) => h.hhid.toLowerCase().includes(q) || (h.region && h.region.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [rawHouseholds, hhStatusFilter, hhSearch]);
 
   return (
     <>
@@ -477,7 +530,7 @@ function HeatmapGridSection({
             <div>
               <CardTitle>Heatmap Grid — SEC × MOSR</CardTitle>
               <CardDescription>
-                SEC (rows 1,2,3) × MOSR (columns 1,2,3,4). Each cell shows Target / Live and Shortfall %.
+                SEC (rows 1–3) × MOSR (columns 1–4). Each cell shows full status breakdown.
               </CardDescription>
             </div>
 
@@ -526,7 +579,7 @@ function HeatmapGridSection({
           <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <span className="size-3.5 rounded border border-emerald-400 bg-emerald-100 dark:bg-emerald-950/60" />
-              Live ≥ Target
+              Total (Prod + Inst + Train) ≥ Target
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="size-3.5 rounded border border-amber-400 bg-amber-100 dark:bg-amber-950/60" />
@@ -540,9 +593,12 @@ function HeatmapGridSection({
               <span className="size-3.5 rounded border border-border bg-muted" />
               Target = 0
             </span>
-            <span className="text-muted-foreground/70">
-              (Click any cell to highlight that SEC across region charts)
+            <span className="ml-auto text-muted-foreground/70 hidden sm:inline">
+              <span className="font-semibold text-foreground">Total</span> = All HHs · Tgt = Target · <span className="text-emerald-600 font-semibold">Prod</span> = Production · <span className="text-blue-600 font-semibold">Inst</span> = Installed · <span className="text-amber-600 font-semibold">Train</span> = Training · <span className="text-rose-600 font-semibold">Short</span> = Shortfall
             </span>
+          </div>
+          <div className="text-[11px] text-muted-foreground/80 pt-0.5">
+            Tip: Click any cell to inspect its Training, Installed, and Production household IDs below.
           </div>
         </CardHeader>
 
@@ -570,8 +626,11 @@ function HeatmapGridSection({
                     {MOSR_LABELS.map((mosr) => {
                       const cell = getCell(sec, mosr);
                       const target = cell ? num(cell.target) : 0;
-                      const live = cell ? num(cell.live) : 0;
-                      const shortfall = cell ? num(cell.shortfall) : Math.max(0, target - live);
+                      const production = cell ? num((cell as HeatmapCell).production ?? cell.live) : 0;
+                      const installed = cell ? num((cell as HeatmapCell).installed ?? 0) : 0;
+                      const training = cell ? num((cell as HeatmapCell).training ?? 0) : 0;
+                      const total = cell ? num((cell as HeatmapCell).total ?? production) : 0;
+                      const shortfall = cell ? num(cell.shortfall) : Math.max(0, target - total);
                       const shortfallPct =
                         cell && cell.shortfall_pct !== undefined
                           ? num(cell.shortfall_pct)
@@ -582,40 +641,59 @@ function HeatmapGridSection({
                       const isHighlighted =
                         highlight?.sec === sec && highlight?.mosr === mosr;
 
+                      const hasActivity = total > 0 || target > 0;
+
                       return (
                         <td
                           key={mosr}
                           onClick={() => onCellClick(sec, mosr)}
-                          className={`cursor-pointer border text-center transition-all hover:scale-[1.01] hover:brightness-95 ${
-                            isExtended ? "p-4 sm:p-6" : "p-3"
+                          className={`cursor-pointer border text-center transition-all hover:brightness-95 ${
+                            isExtended ? "p-3 sm:p-4" : "p-2"
                           } ${cellBg(
                             target,
-                            live,
+                            total,
                             shortfallPct
                           )} ${
                             isHighlighted
-                              ? "ring-2 ring-primary ring-offset-2 font-bold shadow-md"
+                              ? "ring-2 ring-primary ring-offset-2 shadow-md"
                               : ""
                           }`}
                         >
-                          <div className="space-y-1">
-                            <div className={`font-mono font-bold ${isExtended ? "text-lg" : "text-sm"}`}>
-                              {live} <span className="opacity-60">/</span> {target}
-                            </div>
-                            {target > 0 ? (
-                              <div className={`font-medium opacity-85 ${isExtended ? "text-xs" : "text-[11px]"}`}>
-                                {live >= target ? (
-                                  <span className="text-emerald-800 dark:text-emerald-300 font-semibold">
-                                    Achieved
-                                  </span>
-                                ) : (
-                                  <span>{Math.round(shortfallPct)}% short</span>
-                                )}
+                          {!hasActivity ? (
+                            <div className="text-[10px] opacity-35 py-1">—</div>
+                          ) : (
+                            <div className={`space-y-1 ${isExtended ? "text-xs" : "text-[10px]"}`}>
+                              {/* Total & Target */}
+                              <div className="flex items-center justify-between gap-1 leading-tight pb-0.5 border-b border-current/15">
+                                <span className="font-semibold text-foreground shrink-0">Total</span>
+                                <span className="font-mono font-bold text-foreground">
+                                  {total} <span className="opacity-50 font-normal">/ {target}</span>
+                                </span>
                               </div>
-                            ) : (
-                              <div className="text-[10px] opacity-50">Target 0</div>
-                            )}
-                          </div>
+                              {/* Production */}
+                              <div className="flex items-center justify-between gap-1 leading-tight">
+                                <span className="text-emerald-700 dark:text-emerald-400 font-semibold shrink-0">Prod</span>
+                                <span className="font-mono font-bold text-emerald-800 dark:text-emerald-300">{production}</span>
+                              </div>
+                              {/* Installed */}
+                              <div className="flex items-center justify-between gap-1 leading-tight">
+                                <span className="text-blue-600 dark:text-blue-400 font-medium shrink-0">Inst</span>
+                                <span className="font-mono font-semibold text-blue-700 dark:text-blue-300">{installed}</span>
+                              </div>
+                              {/* Training */}
+                              <div className="flex items-center justify-between gap-1 leading-tight">
+                                <span className="text-amber-600 dark:text-amber-400 font-semibold shrink-0">Train</span>
+                                <span className="font-mono font-bold text-amber-700 dark:text-amber-300">{training}</span>
+                              </div>
+                              {/* Divider + Shortfall */}
+                              <div className="border-t border-current/15 pt-0.5 flex items-center justify-between gap-1">
+                                <span className="text-rose-600 dark:text-rose-400 font-medium shrink-0">Short</span>
+                                <span className={`font-mono font-bold ${shortfall === 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-400"}`}>
+                                  {shortfall === 0 ? "✓ Met" : `-${shortfall}`}
+                                </span>
+                              </div>
+                            </div>
+                          )}
                         </td>
                       );
                     })}
@@ -624,6 +702,131 @@ function HeatmapGridSection({
               </tbody>
             </table>
           </div>
+
+          {/* Detailed Household Inventory for Highlighted Cell */}
+          {highlight && selectedCell && (
+            <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4 space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-border pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="rounded-md bg-primary/10 p-1.5 text-primary">
+                    <Building2 className="size-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-foreground">
+                      SEC {highlight.sec} × MOSR {highlight.mosr} — Household Inventory
+                    </h4>
+                    <p className="text-xs text-muted-foreground">
+                      Total: {selectedCell.total} · Production: {selectedCell.production} · Training: {selectedCell.training} · Installed: {selectedCell.installed} · Shortfall: {selectedCell.shortfall}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Status filter tabs */}
+                  <div className="flex items-center rounded-md border border-border bg-background p-0.5 text-xs">
+                    {(
+                      [
+                        { id: "ALL", label: `All (${selectedCell.total})` },
+                        { id: "TRAINING", label: `Training (${selectedCell.training})` },
+                        { id: "INSTALLED", label: `Installed (${selectedCell.installed})` },
+                        { id: "PRODUCTION", label: `Production (${selectedCell.production})` },
+                      ] as const
+                    ).map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setHhStatusFilter(tab.id)}
+                        className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                          hhStatusFilter === tab.id
+                            ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Close inspector */}
+                  <button
+                    type="button"
+                    onClick={() => onCellClick(highlight.sec, highlight.mosr)}
+                    className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    title="Close inventory table"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Search bar inside inspector */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="relative flex-1 max-w-xs">
+                  <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="Search HHID (e.g. HH4001) or region..."
+                    value={hhSearch}
+                    onChange={(e) => setHhSearch(e.target.value)}
+                    className="w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  Showing {filteredHouseholds.length} of {rawHouseholds.length} households
+                </span>
+              </div>
+
+              {/* Table of households */}
+              <div className="max-h-60 overflow-y-auto rounded-lg border border-border bg-card">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 border-b border-border bg-muted/90 backdrop-blur-xs font-semibold text-muted-foreground">
+                    <tr>
+                      <th className="py-2 px-3">Household ID</th>
+                      <th className="py-2 px-3">Current Status</th>
+                      <th className="py-2 px-3">Region</th>
+                      <th className="py-2 px-3">Cell</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredHouseholds.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-6 text-center text-xs text-muted-foreground">
+                          No households in this cell match the selected filter.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredHouseholds.map((hh) => (
+                        <tr key={hh.hhid} className="hover:bg-muted/40 transition-colors">
+                          <td className="py-2 px-3 font-mono font-bold text-foreground">
+                            {hh.hhid}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span
+                              className={`inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ${
+                                hh.current_status.startsWith("TRAINING")
+                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-700"
+                                  : hh.current_status === "INSTALLED"
+                                  ? "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-300 dark:border-blue-700"
+                                  : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
+                              }`}
+                            >
+                              {hh.current_status}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-muted-foreground font-medium">
+                            {hh.region || "Unassigned"}
+                          </td>
+                          <td className="py-2 px-3 font-mono text-[11px] text-muted-foreground">
+                            SEC {highlight.sec} · MOSR {highlight.mosr}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </>
@@ -914,12 +1117,368 @@ function RegionDrillDownSection({
   );
 }
 
-// ─── 6. Unclassified Table ────────────────────────────────────────────────────
+// ─── 6. Unclassified Helpers & Components ─────────────────────────────────────
+
+function getUnclassifiedStatusBadge(status?: string | null) {
+  if (!status) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-muted text-muted-foreground">
+        Unknown
+      </span>
+    );
+  }
+  const s = status.toUpperCase();
+  if (s.includes("PROD")) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+        Production
+      </span>
+    );
+  }
+  if (s.includes("TRAIN")) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+        {status}
+      </span>
+    );
+  }
+  if (s.includes("INSTAL")) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800">
+        Installed
+      </span>
+    );
+  }
+  if (s.includes("OBSERV")) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-300 dark:border-purple-800">
+        Observation
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700">
+      {status}
+    </span>
+  );
+}
+
+function getUnclassifiedIssueBadge(
+  issueType?: "NO_SEC" | "NO_MOSR" | "NO_SEC_AND_MOSR",
+  sec?: number | null,
+  mosr?: number | null
+) {
+  const type = issueType || (!sec && !mosr ? "NO_SEC_AND_MOSR" : !sec ? "NO_SEC" : "NO_MOSR");
+  if (type === "NO_SEC_AND_MOSR") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+        <span className="size-1.5 rounded-full bg-rose-500 animate-pulse shrink-0" />
+        Missing Both
+      </span>
+    );
+  }
+  if (type === "NO_SEC") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+        <span className="size-1.5 rounded-full bg-amber-500 shrink-0" />
+        Missing SEC
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+      <span className="size-1.5 rounded-full bg-amber-500 shrink-0" />
+      Missing MOSR
+    </span>
+  );
+}
+
+function getUnclassifiedDescription(row: UnclassifiedRow) {
+  if (row.description) return row.description;
+  const hasSec = row.sec !== null && row.sec !== undefined;
+  const hasMosr = row.mosr !== null && row.mosr !== undefined;
+  if (!hasSec && !hasMosr) {
+    return "Both SEC and MOSR are missing. Requires demographic survey to classify.";
+  }
+  if (!hasSec) {
+    return `SEC is missing (MOSR ${row.mosr} is present). Requires socio-economic classification.`;
+  }
+  if (!hasMosr) {
+    return `MOSR is missing (SEC ${row.sec} is present). Requires household member count.`;
+  }
+  return "Incomplete classification parameters.";
+}
+
+function UnclassifiedModal({
+  isOpen,
+  onClose,
+  rows,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  rows: UnclassifiedRow[];
+}) {
+  const [filterTab, setFilterTab] = useState<"ALL" | "BOTH" | "SEC" | "MOSR">("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [copiedHhid, setCopiedHhid] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  const counts = {
+    total: rows.length,
+    missingBoth: rows.filter((r) => (!r.sec && !r.mosr) || r.issue_type === "NO_SEC_AND_MOSR").length,
+    missingSec: rows.filter((r) => (!r.sec && !!r.mosr) || r.issue_type === "NO_SEC").length,
+    missingMosr: rows.filter((r) => (!!r.sec && !r.mosr) || r.issue_type === "NO_MOSR").length,
+  };
+
+  const filteredRows = rows.filter((r) => {
+    const isBoth = (!r.sec && !r.mosr) || r.issue_type === "NO_SEC_AND_MOSR";
+    const isSecOnly = (!r.sec && !!r.mosr) || r.issue_type === "NO_SEC";
+    const isMosrOnly = (!!r.sec && !r.mosr) || r.issue_type === "NO_MOSR";
+
+    if (filterTab === "BOTH" && !isBoth) return false;
+    if (filterTab === "SEC" && !isSecOnly) return false;
+    if (filterTab === "MOSR" && !isMosrOnly) return false;
+
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    const hhid = (r.hhid || "").toLowerCase();
+    const region = (r.region_name || r.region || "").toLowerCase();
+    const status = (r.current_status || "").toLowerCase();
+    const desc = getUnclassifiedDescription(r).toLowerCase();
+    return hhid.includes(q) || region.includes(q) || status.includes(q) || desc.includes(q);
+  });
+
+  const handleCopy = (hhid: string) => {
+    navigator.clipboard.writeText(hhid);
+    setCopiedHhid(hhid);
+    setTimeout(() => setCopiedHhid(null), 1500);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="fixed inset-0" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 flex flex-col w-full max-w-5xl max-h-[90vh] bg-card border border-amber-300 dark:border-amber-800/80 rounded-2xl shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-amber-500/10 dark:bg-amber-950/30 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="size-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-foreground">
+                  Unclassified Households
+                </h3>
+                <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300">
+                  {rows.length} Total
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Households missing SEC, MOSR, or both. These cannot be mapped into the SEC × MOSR heat grid until classified.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            title="Close (Esc)"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+
+        {/* Toolbar */}
+        <div className="p-4 sm:px-6 border-b border-border bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-1 p-1 rounded-lg border border-border bg-background text-xs">
+            <button
+              type="button"
+              onClick={() => setFilterTab("ALL")}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                filterTab === "ALL"
+                  ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              All ({counts.total})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterTab("BOTH")}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                filterTab === "BOTH"
+                  ? "bg-rose-600 text-white font-semibold shadow-xs"
+                  : "text-muted-foreground hover:text-rose-600"
+              }`}
+            >
+              Missing Both ({counts.missingBoth})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterTab("SEC")}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                filterTab === "SEC"
+                  ? "bg-amber-600 text-white font-semibold shadow-xs"
+                  : "text-muted-foreground hover:text-amber-600"
+              }`}
+            >
+              Missing SEC ({counts.missingSec})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterTab("MOSR")}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                filterTab === "MOSR"
+                  ? "bg-amber-600 text-white font-semibold shadow-xs"
+                  : "text-muted-foreground hover:text-amber-600"
+              }`}
+            >
+              Missing MOSR ({counts.missingMosr})
+            </button>
+          </div>
+
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Search HHID, region, status..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 pl-8 text-xs bg-background"
+            />
+          </div>
+        </div>
+
+        {/* Content Table */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/70 text-xs uppercase tracking-wider text-muted-foreground sticky top-0 z-10 border-b">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold">Household ID</th>
+                  <th className="px-4 py-3 text-left font-semibold">Current Status</th>
+                  <th className="px-4 py-3 text-left font-semibold">Region</th>
+                  <th className="px-4 py-3 text-center font-semibold">SEC</th>
+                  <th className="px-4 py-3 text-center font-semibold">MOSR</th>
+                  <th className="px-4 py-3 text-left font-semibold">Issue Type</th>
+                  <th className="px-4 py-3 text-left font-semibold">Description / Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filteredRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-12 text-center text-xs text-muted-foreground italic">
+                      No unclassified households match the current filters.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRows.map((row, idx) => (
+                    <tr key={row.hhid || row.id || idx} className="hover:bg-muted/40 transition-colors">
+                      <td className="px-4 py-3 font-mono font-bold text-xs text-foreground">
+                        <div className="flex items-center gap-1.5">
+                          <span>{row.hhid}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(row.hhid)}
+                            className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+                            title="Copy HHID"
+                          >
+                            {copiedHhid === row.hhid ? (
+                              <Check className="size-3 text-emerald-600" />
+                            ) : (
+                              <Copy className="size-3" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {getUnclassifiedStatusBadge(row.current_status)}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-foreground">
+                        {row.region_name || row.region ? (
+                          <span>{row.region_name || row.region}</span>
+                        ) : (
+                          <span className="italic text-muted-foreground">Not specified</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {row.sec ? (
+                          <span className="inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200">
+                            SEC {row.sec}
+                          </span>
+                        ) : (
+                          <span className="inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-200">
+                            Missing
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {row.mosr ? (
+                          <span className="inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200">
+                            MOSR {row.mosr}
+                          </span>
+                        ) : (
+                          <span className="inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-200">
+                            Missing
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {getUnclassifiedIssueBadge(row.issue_type, row.sec, row.mosr)}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-foreground font-medium">
+                        {getUnclassifiedDescription(row)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-6 py-3 border-t border-border bg-muted/10 text-xs text-muted-foreground shrink-0">
+          <span>
+            Showing <strong className="text-foreground">{filteredRows.length}</strong> of{" "}
+            <strong className="text-foreground">{rows.length}</strong> unclassified household{rows.length !== 1 ? "s" : ""}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onClose}
+            className="text-xs h-8"
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function UnclassifiedTableSection({ rows }: { rows: UnclassifiedRow[] }) {
   if (!rows || rows.length === 0) return null;
   const [isExtended, setIsExtended] = useState(false);
+  const [filterTab, setFilterTab] = useState<"ALL" | "BOTH" | "SEC" | "MOSR">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [copiedHhid, setCopiedHhid] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isExtended) return;
@@ -935,15 +1494,36 @@ function UnclassifiedTableSection({ rows }: { rows: UnclassifiedRow[] }) {
     };
   }, [isExtended]);
 
+  const counts = {
+    total: rows.length,
+    missingBoth: rows.filter((r) => (!r.sec && !r.mosr) || r.issue_type === "NO_SEC_AND_MOSR").length,
+    missingSec: rows.filter((r) => (!r.sec && !!r.mosr) || r.issue_type === "NO_SEC").length,
+    missingMosr: rows.filter((r) => (!!r.sec && !r.mosr) || r.issue_type === "NO_MOSR").length,
+  };
+
   const filteredRows = rows.filter((r) => {
+    const isBoth = (!r.sec && !r.mosr) || r.issue_type === "NO_SEC_AND_MOSR";
+    const isSecOnly = (!r.sec && !!r.mosr) || r.issue_type === "NO_SEC";
+    const isMosrOnly = (!!r.sec && !r.mosr) || r.issue_type === "NO_MOSR";
+
+    if (filterTab === "BOTH" && !isBoth) return false;
+    if (filterTab === "SEC" && !isSecOnly) return false;
+    if (filterTab === "MOSR" && !isMosrOnly) return false;
+
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
-    return (
-      (r.hhid && r.hhid.toLowerCase().includes(q)) ||
-      (r.region_name && r.region_name.toLowerCase().includes(q)) ||
-      (r.region && r.region.toLowerCase().includes(q))
-    );
+    const hhid = (r.hhid || "").toLowerCase();
+    const region = (r.region_name || r.region || "").toLowerCase();
+    const status = (r.current_status || "").toLowerCase();
+    const desc = getUnclassifiedDescription(r).toLowerCase();
+    return hhid.includes(q) || region.includes(q) || status.includes(q) || desc.includes(q);
   });
+
+  const handleCopy = (hhid: string) => {
+    navigator.clipboard.writeText(hhid);
+    setCopiedHhid(hhid);
+    setTimeout(() => setCopiedHhid(null), 1500);
+  };
 
   return (
     <>
@@ -986,17 +1566,64 @@ function UnclassifiedTableSection({ rows }: { rows: UnclassifiedRow[] }) {
                   Data Quality Issues — Households Missing SEC or MOSR
                 </CardTitle>
                 <CardDescription>
-                  {rows.length} household{rows.length !== 1 ? "s" : ""} missing SEC or MOSR classification data.
+                  {rows.length} household{rows.length !== 1 ? "s" : ""} missing SEC, MOSR, or both. Cannot be mapped into the SEC × MOSR heat grid.
                 </CardDescription>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-start sm:self-auto">
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              <div className="flex items-center gap-1 p-0.5 rounded-lg border border-border bg-background text-xs">
+                <button
+                  type="button"
+                  onClick={() => setFilterTab("ALL")}
+                  className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                    filterTab === "ALL"
+                      ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  All ({counts.total})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterTab("BOTH")}
+                  className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                    filterTab === "BOTH"
+                      ? "bg-rose-600 text-white font-semibold shadow-xs"
+                      : "text-muted-foreground hover:text-rose-600"
+                  }`}
+                >
+                  Missing Both ({counts.missingBoth})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterTab("SEC")}
+                  className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                    filterTab === "SEC"
+                      ? "bg-amber-600 text-white font-semibold shadow-xs"
+                      : "text-muted-foreground hover:text-amber-600"
+                  }`}
+                >
+                  Missing SEC ({counts.missingSec})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterTab("MOSR")}
+                  className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                    filterTab === "MOSR"
+                      ? "bg-amber-600 text-white font-semibold shadow-xs"
+                      : "text-muted-foreground hover:text-amber-600"
+                  }`}
+                >
+                  Missing MOSR ({counts.missingMosr})
+                </button>
+              </div>
+
               <div className="relative w-44">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
                 <Input
                   type="text"
-                  placeholder="Filter HHID or Region..."
+                  placeholder="Filter HHID, region..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="h-8 pl-8 text-xs bg-background"
@@ -1035,26 +1662,66 @@ function UnclassifiedTableSection({ rows }: { rows: UnclassifiedRow[] }) {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-muted text-xs uppercase tracking-wider text-muted-foreground z-10 shadow-xs">
                 <tr className="border-b">
-                  <th className="px-4 py-3 text-left font-medium">HHID</th>
+                  <th className="px-4 py-3 text-left font-medium">Household ID</th>
+                  <th className="px-4 py-3 text-left font-medium">Status</th>
                   <th className="px-4 py-3 text-left font-medium">Region</th>
                   <th className="px-4 py-3 text-center font-medium">SEC</th>
                   <th className="px-4 py-3 text-center font-medium">MOSR</th>
+                  <th className="px-4 py-3 text-left font-medium">Issue</th>
+                  <th className="px-4 py-3 text-left font-medium">Description</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-xs text-muted-foreground italic">
+                    <td colSpan={7} className="px-4 py-8 text-center text-xs text-muted-foreground italic">
                       No matching unclassified households found.
                     </td>
                   </tr>
                 ) : (
                   filteredRows.map((row, idx) => (
                     <tr key={row.hhid || row.id || idx} className="hover:bg-muted/30">
-                      <td className="px-4 py-2 font-mono text-xs">{nullDisplay(row.hhid)}</td>
-                      <td className="px-4 py-2">{nullDisplay(row.region_name || row.region)}</td>
-                      <td className="px-4 py-2 text-center">{nullDisplay(row.sec)}</td>
-                      <td className="px-4 py-2 text-center">{nullDisplay(row.mosr)}</td>
+                      <td className="px-4 py-2 font-mono text-xs font-bold">
+                        <div className="flex items-center gap-1.5">
+                          <span>{row.hhid}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(row.hhid)}
+                            className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+                            title="Copy HHID"
+                          >
+                            {copiedHhid === row.hhid ? (
+                              <Check className="size-3 text-emerald-600" />
+                            ) : (
+                              <Copy className="size-3" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2">{getUnclassifiedStatusBadge(row.current_status)}</td>
+                      <td className="px-4 py-2 text-xs">
+                        {row.region_name || row.region ? (
+                          <span>{row.region_name || row.region}</span>
+                        ) : (
+                          <span className="italic text-muted-foreground">Not specified</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-center text-xs">
+                        {row.sec ? (
+                          <span className="font-semibold text-blue-600">SEC {row.sec}</span>
+                        ) : (
+                          <span className="font-semibold text-rose-500">Missing</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-center text-xs">
+                        {row.mosr ? (
+                          <span className="font-semibold text-blue-600">MOSR {row.mosr}</span>
+                        ) : (
+                          <span className="font-semibold text-rose-500">Missing</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2">{getUnclassifiedIssueBadge(row.issue_type, row.sec, row.mosr)}</td>
+                      <td className="px-4 py-2 text-xs text-foreground font-medium">{getUnclassifiedDescription(row)}</td>
                     </tr>
                   ))
                 )}
@@ -1152,45 +1819,45 @@ function ShortfallReasonPanel({
 
   const totalReasonHits = reasons.reduce((sum, reason) => sum + reason.count, 0);
 
-  return (
-    <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900/70 dark:bg-amber-950/10">
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="size-5 text-amber-500" />
-          <CardTitle className="text-base text-amber-700 dark:text-amber-300">
-            Why the shortfall is high
-          </CardTitle>
-        </div>
-        <CardDescription>
-          These are the main data-quality reasons behind the shortfall. One household can fall into more than one category.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          {reasons.map((reason) => (
-            <div
-              key={reason.key}
-              className="rounded-xl border border-amber-200 bg-white/80 p-3 shadow-sm dark:border-amber-800 dark:bg-slate-900/60"
-            >
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
-                {reason.label}
-              </div>
-              <div className="mt-2 text-2xl font-bold text-foreground">{reason.count.toLocaleString()}</div>
-              <div className="mt-1 text-xs text-muted-foreground">{reason.description}</div>
-            </div>
-          ))}
-        </div>
+  // return (
+  //   // <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900/70 dark:bg-amber-950/10">
+  //   //   <CardHeader className="pb-3">
+  //   //     <div className="flex items-center gap-2">
+  //   //       <AlertTriangle className="size-5 text-amber-500" />
+  //   //       <CardTitle className="text-base text-amber-700 dark:text-amber-300">
+  //   //         Why the shortfall is high
+  //   //       </CardTitle>
+  //   //     </div>
+  //   //     <CardDescription>
+  //   //       These are the main data-quality reasons behind the shortfall. One household can fall into more than one category.
+  //   //     </CardDescription>
+  //   //   </CardHeader>
+  //   //   <CardContent className="space-y-3">
+  //   //     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+  //   //       {reasons.map((reason) => (
+  //   //         <div
+  //   //           key={reason.key}
+  //   //           className="rounded-xl border border-amber-200 bg-white/80 p-3 shadow-sm dark:border-amber-800 dark:bg-slate-900/60"
+  //   //         >
+  //   //           <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
+  //   //             {reason.label}
+  //   //           </div>
+  //   //           <div className="mt-2 text-2xl font-bold text-foreground">{reason.count.toLocaleString()}</div>
+  //   //           <div className="mt-1 text-xs text-muted-foreground">{reason.description}</div>
+  //   //         </div>
+  //   //       ))}
+  //   //     </div>
 
-        <div className="rounded-lg border border-dashed border-amber-300 bg-amber-100/40 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/20 dark:text-amber-100">
-          <span className="font-semibold">Shortfall total:</span> {totalShortfall.toLocaleString()} households
-          <span className="mx-2 text-amber-700 dark:text-amber-300">•</span>
-          <span className="text-amber-800 dark:text-amber-200">
-            {totalReasonHits.toLocaleString()} reason hits across the data-quality gaps above
-          </span>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  //   //     <div className="rounded-lg border border-dashed border-amber-300 bg-amber-100/40 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/20 dark:text-amber-100">
+  //   //       <span className="font-semibold">Shortfall total:</span> {totalShortfall.toLocaleString()} households
+  //   //       <span className="mx-2 text-amber-700 dark:text-amber-300">•</span>
+  //   //       <span className="text-amber-800 dark:text-amber-200">
+  //   //         {totalReasonHits.toLocaleString()} reason hits across the data-quality gaps above
+  //   //       </span>
+  //   //     </div>
+  //   //   </CardContent>
+  //   // </Card>
+  // );
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -1226,6 +1893,7 @@ export default function PanelPage() {
   const [cells, setCells] = useState<HeatmapCell[]>([]);
   const [stacked, setStacked] = useState<StackedBarData[]>([]);
   const [unclassified, setUnclassified] = useState<UnclassifiedRow[]>([]);
+  const [showUnclassifiedModal, setShowUnclassifiedModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -1480,6 +2148,7 @@ export default function PanelPage() {
             productionCount={summaryData.production_count}
             installedCount={summaryData.installed_count}
             trainingCount={summaryData.training_count}
+            onUnclassifiedClick={unclassified.length > 0 ? () => setShowUnclassifiedModal(true) : undefined}
           />
 
           <ShortfallReasonPanel
@@ -1609,6 +2278,13 @@ export default function PanelPage() {
           {unclassified.length > 0 && (
             <UnclassifiedTableSection rows={unclassified} />
           )}
+
+          {/* Unclassified Modal (triggered from card click) */}
+          <UnclassifiedModal
+            isOpen={showUnclassifiedModal}
+            onClose={() => setShowUnclassifiedModal(false)}
+            rows={unclassified}
+          />
         </>
       )}
     </div>
@@ -1759,7 +2435,7 @@ function getGroupedInstalledHouseholdsData(
         const liveVal = matched.reduce((sum, cell) => sum + num(cell.live), 0);
         const targetVal = matched.reduce((sum, cell) => sum + num(cell.target), 0);
 
-        const shortfallVal = Math.max(0, targetVal - liveVal);
+        const shortfallVal = targetVal - liveVal; // signed: negative = surplus, positive = shortfall
         const metPct = targetVal > 0 ? (liveVal / targetVal) * 100 : 100;
 
         row[key] = liveVal;
@@ -1771,7 +2447,7 @@ function getGroupedInstalledHouseholdsData(
         secTarget += targetVal;
       });
 
-      const secShortfall = Math.max(0, secTarget - secLive);
+      const secShortfall = secTarget - secLive; // signed net
       const secMetPct = secTarget > 0 ? (secLive / secTarget) * 100 : 100;
 
       row[`sec_${sec}_total`] = secLive;
@@ -1785,7 +2461,7 @@ function getGroupedInstalledHouseholdsData(
 
     row.grand_total = grandLive;
     row.grand_target = grandTarget;
-    row.grand_shortfall = Math.max(0, grandTarget - grandLive);
+    row.grand_shortfall = grandTarget - grandLive; // signed net
     row.grand_met_pct = grandTarget > 0 ? (grandLive / grandTarget) * 100 : 100;
 
     row.region_live = grandLive;
@@ -1811,7 +2487,7 @@ function getGroupedInstalledHouseholdsData(
       const key = `sec_${sec}_mosr_${mosr}`;
       const liveSum = rows.reduce((sum, row) => sum + num(row[key]), 0);
       const targetSum = rows.reduce((sum, row) => sum + num(row[`${key}_target`]), 0);
-      const shortfallSum = Math.max(0, targetSum - liveSum);
+      const shortfallSum = targetSum - liveSum; // signed net across all regions
       const metPctSum = targetSum > 0 ? (liveSum / targetSum) * 100 : 100;
 
       totalRow[key] = liveSum;
@@ -1823,7 +2499,7 @@ function getGroupedInstalledHouseholdsData(
       secTargetTotal += targetSum;
     });
 
-    const secShortfallTotal = Math.max(0, secTargetTotal - secLiveTotal);
+    const secShortfallTotal = secTargetTotal - secLiveTotal; // signed net
     const secMetPctTotal = secTargetTotal > 0 ? (secLiveTotal / secTargetTotal) * 100 : 100;
 
     totalRow[`sec_${sec}_total`] = secLiveTotal;
@@ -1837,7 +2513,7 @@ function getGroupedInstalledHouseholdsData(
 
   totalRow.grand_total = totalGrandLive;
   totalRow.grand_target = totalGrandTarget;
-  totalRow.grand_shortfall = Math.max(0, totalGrandTarget - totalGrandLive);
+  totalRow.grand_shortfall = totalGrandTarget - totalGrandLive; // signed net
   totalRow.grand_met_pct = totalGrandTarget > 0 ? (totalGrandLive / totalGrandTarget) * 100 : 100;
 
   totalRow.region_live = totalGrandLive;
@@ -1893,7 +2569,7 @@ function TargetQuotaTable({
     };
   }, [isExtended]);
 
-  // Filter rows
+  // Filter rows — simple region name search (TargetQuotaTable has no classifier)
   const filteredRows = rows.filter((r) =>
     r.region_name.toLowerCase().includes(searchQuery.toLowerCase().trim())
   );
@@ -2300,7 +2976,7 @@ function TargetQuotaTable({
                   colSpan={17}
                   className="text-center py-8 text-muted-foreground text-xs"
                 >
-                  No regions found matching "{searchQuery}"
+                  No regions found matching &quot;{searchQuery}&quot;
                 </td>
               </tr>
             ) : (
@@ -2447,6 +3123,28 @@ function TargetQuotaTable({
 
 type MatrixMetric = "installed" | "target" | "shortfall" | "fulfillment";
 
+function formatShortfall(target: number, live: number): { display: string; className: string } {
+  if (target === 0) {
+    return { display: "—", className: "text-slate-400 dark:text-slate-500 font-normal" };
+  }
+  const diff = target - live;
+  if (diff === 0) {
+    return { display: "0", className: "text-emerald-600 dark:text-emerald-400 font-semibold" };
+  }
+  if (diff > 0) {
+    // Shortfall: needs diff more households -> -diff in rose/red
+    return { display: `-${diff}`, className: "text-rose-600 dark:text-rose-400 font-bold" };
+  }
+  // Extra / surplus households above target -> +abs(diff) in emerald/green
+  return { display: `+${Math.abs(diff)}`, className: "text-emerald-600 dark:text-emerald-400 font-bold" };
+}
+
+// Format shortfall value for clipboard/CSV export so that Excel & Google Sheets preserve the leading '+' sign
+function exportShortfall(target: number, live: number): string {
+  const disp = formatShortfall(target, live).display;
+  return disp.startsWith("+") ? `\u200E${disp}` : disp;
+}
+
 function InstalledHouseholdsTable({
   regions,
   onRegionClick,
@@ -2464,10 +3162,88 @@ function InstalledHouseholdsTable({
   const { rows, totalRow } = getGroupedInstalledHouseholdsData(regions);
   const [isExtended, setIsExtended] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [displayMetric, setDisplayMetric] = useState<MatrixMetric>("installed");
-  const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sortKey, setSortKey] = useState<string | null>(null);
+
+  // ── Household Classifier State ──────────────────────────────────────────────
+  const [incomeInput, setIncomeInput] = useState("");
+  const [mosrInput, setMosrInput] = useState("");
+  const [lookupHighlight, setLookupHighlight] = useState<{ sec: number; mosr: number } | null>(null);
+  const [onlyShortfallCells, setOnlyShortfallCells] = useState(true);
+
+  // SEC income bracket definitions (AMD monthly household income)
+  const SEC_INCOME_BRACKETS = [
+    {
+      sec: 1,
+      label: "SEC 1 — High Income",
+      range: "≥ ₾500,000 / month",
+      min: 500000,
+      max: Infinity,
+      color: "emerald",
+      desc: "High-income segment: monthly household income ≥ 500,000 AMD",
+    },
+    {
+      sec: 2,
+      label: "SEC 2 — Middle Income",
+      range: "₾200,000 – ₾499,999 / month",
+      min: 200000,
+      max: 499999,
+      color: "blue",
+      desc: "Middle-income segment: monthly household income 200,000–499,999 AMD",
+    },
+    {
+      sec: 3,
+      label: "SEC 3 — Lower Income",
+      range: "< ₾200,000 / month",
+      min: 0,
+      max: 199999,
+      color: "amber",
+      desc: "Lower-income segment: monthly household income below 200,000 AMD",
+    },
+  ];
+
+  // Resolve SEC from income value
+  const resolvedSec = useMemo(() => {
+    const val = Number(incomeInput.replace(/[^0-9]/g, ""));
+    if (!val || isNaN(val)) return null;
+    const bracket = SEC_INCOME_BRACKETS.find((b) => val >= b.min && val <= b.max);
+    return bracket ? bracket.sec : null;
+  }, [incomeInput]);
+
+  // Resolve MOSR from input
+  const resolvedMosr = useMemo(() => {
+    const val = Number(mosrInput.replace(/[^0-9]/g, ""));
+    if (!val || isNaN(val) || val < 1 || val > 4) return null;
+    return val as 1 | 2 | 3 | 4;
+  }, [mosrInput]);
+
+  // Computed SEC bracket info
+  const activeBracket = resolvedSec
+    ? SEC_INCOME_BRACKETS.find((b) => b.sec === resolvedSec) ?? null
+    : null;
+
+  // Total row value at lookup cell
+  const lookupCellTotal = useMemo(() => {
+    if (!resolvedSec || !resolvedMosr) return null;
+    return num(totalRow[`sec_${resolvedSec}_mosr_${resolvedMosr}`]);
+  }, [resolvedSec, resolvedMosr, totalRow]);
+
+  // Apply highlight on both resolved
+  useEffect(() => {
+    if (resolvedSec && resolvedMosr) {
+      setLookupHighlight({ sec: resolvedSec, mosr: resolvedMosr });
+      setOnlyShortfallCells(true);
+    } else {
+      setLookupHighlight(null);
+    }
+  }, [resolvedSec, resolvedMosr]);
+
+  const clearLookup = () => {
+    setIncomeInput("");
+    setMosrInput("");
+    setLookupHighlight(null);
+    setOnlyShortfallCells(true);
+  };
   const [sortDesc, setSortDesc] = useState<boolean>(true);
   const [hoveredCell, setHoveredCell] = useState<{
     regionName: string;
@@ -2495,10 +3271,30 @@ function InstalledHouseholdsTable({
     };
   }, [isExtended]);
 
-  // Filter rows
-  const filteredRows = rows.filter((r) =>
-    r.region_name.toLowerCase().includes(searchQuery.toLowerCase().trim())
-  );
+  // Filter rows — when lookup active and onlyShortfallCells is true, only show rows that have shortfall > 0 in the matched cell
+  const filteredRows = rows.filter((r) => {
+    const matchesSearch = r.region_name.toLowerCase().includes(searchQuery.toLowerCase().trim());
+    if (!matchesSearch) return false;
+    if (lookupHighlight && onlyShortfallCells) {
+      const shortfall = num(r[`sec_${lookupHighlight.sec}_mosr_${lookupHighlight.mosr}_shortfall`]);
+      return shortfall > 0;
+    }
+    return true;
+  });
+
+  // Count how many regions have shortfall > 0 in the lookup cell (shown in result card)
+  const lookupShortfallRegionCount = useMemo(() => {
+    if (!lookupHighlight) return 0;
+    return rows.filter(
+      (r) => num(r[`sec_${lookupHighlight.sec}_mosr_${lookupHighlight.mosr}_shortfall`]) > 0
+    ).length;
+  }, [lookupHighlight, rows]);
+
+  // Total shortfall in the lookup cell (all regions combined)
+  const lookupCellShortfall = useMemo(() => {
+    if (!lookupHighlight) return null;
+    return num(totalRow[`sec_${lookupHighlight.sec}_mosr_${lookupHighlight.mosr}_shortfall`]);
+  }, [lookupHighlight, totalRow]);
 
   // Sort rows if sortKey is set
   const sortedRows = [...filteredRows].sort((a, b) => {
@@ -2600,46 +3396,75 @@ function InstalledHouseholdsTable({
   // Copy as TSV (Tab Separated Values) for perfect pasting into Microsoft Excel / Google Sheets
   const handleCopyTSV = () => {
     const lines: string[] = [];
-    lines.push(`Installed Households (${displayMetric.toUpperCase()})`);
-    lines.push(
-      [
-        "SEC",
-        "1", "", "", "", "1 Total",
-        "2", "", "", "", "2 Total",
-        "3", "", "", "", "3 Total",
-        "Grand Total",
-      ].join("\t")
-    );
-    lines.push(
-      [
-        "Region/MOSR",
-        "1", "2", "3", "4", "",
-        "1", "2", "3", "4", "",
-        "1", "2", "3", "4", "",
-        "",
-      ].join("\t")
-    );
+    lines.push("Installed Households (Target, Live, Shortfall)");
 
+    // Header 1: SEC groups
+    const h1 = ["SEC"];
+    SEC_LABELS.forEach((sec) => {
+      MOSR_LABELS.forEach(() => {
+        h1.push(String(sec), "", "");
+      });
+      h1.push(`${sec} Total`, "", "");
+    });
+    h1.push("Grand Total", "", "");
+    lines.push(h1.join("\t"));
+
+    // Header 2: MOSR numbers
+    const h2 = ["Region/MOSR"];
+    SEC_LABELS.forEach(() => {
+      MOSR_LABELS.forEach((m) => {
+        h2.push(String(m), "", "");
+      });
+      h2.push("", "", "");
+    });
+    h2.push("", "", "");
+    lines.push(h2.join("\t"));
+
+    // Header 3: Tgt, Live, Short
+    const h3 = [""];
+    SEC_LABELS.forEach(() => {
+      MOSR_LABELS.forEach(() => {
+        h3.push("Tgt", "Live", "Short");
+      });
+      h3.push("Tgt", "Live", "Short");
+    });
+    h3.push("Tgt", "Live", "Short");
+    lines.push(h3.join("\t"));
+
+    // Data rows
     sortedRows.forEach((row) => {
       const parts = [row.region_name];
       SEC_LABELS.forEach((sec) => {
         MOSR_LABELS.forEach((mosr) => {
-          parts.push(getCellValue(row, sec, mosr, displayMetric).display);
+          const t = num(row[`sec_${sec}_mosr_${mosr}_target`]);
+          const l = num(row[`sec_${sec}_mosr_${mosr}`]);
+          parts.push(t === 0 ? "—" : String(t), String(l), exportShortfall(t, l));
         });
-        parts.push(getGroupTotalValue(row, sec, displayMetric).display);
+        const st = num(row[`sec_${sec}_target`]);
+        const sl = num(row[`sec_${sec}_total`]);
+        parts.push(st === 0 ? "—" : String(st), String(sl), exportShortfall(st, sl));
       });
-      parts.push(getGrandTotalValue(row, displayMetric).display);
+      const gt = num(row.grand_target);
+      const gl = num(row.grand_total);
+      parts.push(gt === 0 ? "—" : String(gt), String(gl), exportShortfall(gt, gl));
       lines.push(parts.join("\t"));
     });
 
+    // Total row
     const totalParts = ["Total"];
     SEC_LABELS.forEach((sec) => {
       MOSR_LABELS.forEach((mosr) => {
-        totalParts.push(getCellValue(totalRow, sec, mosr, displayMetric).display);
+        const t = num(totalRow[`sec_${sec}_mosr_${mosr}_target`]);
+        const l = num(totalRow[`sec_${sec}_mosr_${mosr}`]);
+        totalParts.push(t === 0 ? "—" : String(t), String(l), exportShortfall(t, l));
       });
-      totalParts.push(getGroupTotalValue(totalRow, sec, displayMetric).display);
+      const st = num(totalRow[`sec_${sec}_target`]);
+      const sl = num(totalRow[`sec_${sec}_total`]);
+      totalParts.push(st === 0 ? "—" : String(st), String(sl), exportShortfall(st, sl));
     });
-    totalParts.push(getGrandTotalValue(totalRow, displayMetric).display);
+    const gt = num(totalRow.grand_target);
+    const gl = num(totalRow.grand_total);
+    totalParts.push(gt === 0 ? "—" : String(gt), String(gl), exportShortfall(gt, gl));
     lines.push(totalParts.join("\t"));
 
     navigator.clipboard.writeText(lines.join("\n"));
@@ -2650,53 +3475,77 @@ function InstalledHouseholdsTable({
   // Export as CSV file
   const handleExportCSV = () => {
     const lines: string[] = [];
-    lines.push(`"Installed Households (${displayMetric})"`);
-    lines.push(
-      [
-        '"SEC"',
-        '"1"', '""', '""', '""', '"1 Total"',
-        '"2"', '""', '""', '""', '"2 Total"',
-        '"3"', '""', '""', '""', '"3 Total"',
-        '"Grand Total"',
-      ].join(",")
-    );
-    lines.push(
-      [
-        '"Region/MOSR"',
-        '"1"', '"2"', '"3"', '"4"', '""',
-        '"1"', '"2"', '"3"', '"4"', '""',
-        '"1"', '"2"', '"3"', '"4"', '""',
-        '""',
-      ].join(",")
-    );
+    lines.push('"Installed Households (Target, Live, Shortfall)"');
+
+    const h1 = ['"SEC"'];
+    SEC_LABELS.forEach((sec) => {
+      MOSR_LABELS.forEach(() => {
+        h1.push(`"${sec}"`, '""', '""');
+      });
+      h1.push(`"${sec} Total"`, '""', '""');
+    });
+    h1.push('"Grand Total"', '""', '""');
+    lines.push(h1.join(","));
+
+    const h2 = ['"Region/MOSR"'];
+    SEC_LABELS.forEach(() => {
+      MOSR_LABELS.forEach((m) => {
+        h2.push(`"${m}"`, '""', '""');
+      });
+      h2.push('""', '""', '""');
+    });
+    h2.push('""', '""', '""');
+    lines.push(h2.join(","));
+
+    const h3 = ['""'];
+    SEC_LABELS.forEach(() => {
+      MOSR_LABELS.forEach(() => {
+        h3.push('"Tgt"', '"Live"', '"Short"');
+      });
+      h3.push('"Tgt"', '"Live"', '"Short"');
+    });
+    h3.push('"Tgt"', '"Live"', '"Short"');
+    lines.push(h3.join(","));
 
     sortedRows.forEach((row) => {
       const parts = [`"${row.region_name}"`];
       SEC_LABELS.forEach((sec) => {
         MOSR_LABELS.forEach((mosr) => {
-          parts.push(`"${getCellValue(row, sec, mosr, displayMetric).display}"`);
+          const t = num(row[`sec_${sec}_mosr_${mosr}_target`]);
+          const l = num(row[`sec_${sec}_mosr_${mosr}`]);
+          parts.push(`"${t === 0 ? "—" : t}"`, `"${l}"`, `"${exportShortfall(t, l)}"`);
         });
-        parts.push(`"${getGroupTotalValue(row, sec, displayMetric).display}"`);
+        const st = num(row[`sec_${sec}_target`]);
+        const sl = num(row[`sec_${sec}_total`]);
+        parts.push(`"${st === 0 ? "—" : st}"`, `"${sl}"`, `"${exportShortfall(st, sl)}"`);
       });
-      parts.push(`"${getGrandTotalValue(row, displayMetric).display}"`);
+      const gt = num(row.grand_target);
+      const gl = num(row.grand_total);
+      parts.push(`"${gt === 0 ? "—" : gt}"`, `"${gl}"`, `"${exportShortfall(gt, gl)}"`);
       lines.push(parts.join(","));
     });
 
     const totalParts = ['"Total"'];
     SEC_LABELS.forEach((sec) => {
       MOSR_LABELS.forEach((mosr) => {
-        totalParts.push(`"${getCellValue(totalRow, sec, mosr, displayMetric).display}"`);
+        const t = num(totalRow[`sec_${sec}_mosr_${mosr}_target`]);
+        const l = num(totalRow[`sec_${sec}_mosr_${mosr}`]);
+        totalParts.push(`"${t === 0 ? "—" : t}"`, `"${l}"`, `"${exportShortfall(t, l)}"`);
       });
-      totalParts.push(`"${getGroupTotalValue(totalRow, sec, displayMetric).display}"`);
+      const st = num(totalRow[`sec_${sec}_target`]);
+      const sl = num(totalRow[`sec_${sec}_total`]);
+      totalParts.push(`"${st === 0 ? "—" : st}"`, `"${sl}"`, `"${exportShortfall(st, sl)}"`);
     });
-    totalParts.push(`"${getGrandTotalValue(totalRow, displayMetric).display}"`);
+    const gt = num(totalRow.grand_target);
+    const gl = num(totalRow.grand_total);
+    totalParts.push(`"${gt === 0 ? "—" : gt}"`, `"${gl}"`, `"${exportShortfall(gt, gl)}"`);
     lines.push(totalParts.join(","));
 
-    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `installed_households_${displayMetric}.csv`);
+    link.setAttribute("download", `installed_households_matrix.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -2721,7 +3570,7 @@ function InstalledHouseholdsTable({
           <div className="flex items-center justify-between px-4 py-2 bg-blue-700 text-white text-xs font-medium shrink-0">
             <div className="flex items-center gap-2">
               <Maximize2 className="size-3.5" />
-              <span className="font-semibold">Installed Households Matrix (Extended View — {displayMetric.toUpperCase()})</span>
+              <span className="font-semibold">Installed Households Matrix (Extended View)</span>
             </div>
             <button
               type="button"
@@ -2733,6 +3582,184 @@ function InstalledHouseholdsTable({
             </button>
           </div>
         )}
+
+        {/* 0. Household Classifier — SEC Income & MOSR Lookup */}
+        <div className="border-b bg-gradient-to-r from-indigo-50/70 via-background to-indigo-50/40 dark:from-indigo-950/30 dark:via-background dark:to-indigo-950/20 p-4 shrink-0">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300">
+              <Filter className="size-4" />
+            </div>
+            <div>
+              <span className="text-sm font-semibold text-foreground">Household Classifier — Find Your Cell</span>
+              <p className="text-[11px] text-muted-foreground">
+                Enter a household&#39;s monthly income (AMD) to resolve SEC group, then pick MOSR to pinpoint its panel slot.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3">
+            {/* SEC via Income input */}
+            <div className="flex flex-col gap-1 flex-1 min-w-0">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Monthly Income (AMD)
+              </label>
+              <div className="relative">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-medium select-none">&#x20BE;</span>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="e.g. 300000"
+                  value={incomeInput}
+                  onChange={(e) => setIncomeInput(e.target.value.replace(/[^0-9]/g, ""))}
+                  className={`h-9 pl-7 text-sm font-mono bg-background transition-all ${
+                    resolvedSec === 1
+                      ? "border-emerald-400 ring-1 ring-emerald-300 dark:border-emerald-600"
+                      : resolvedSec === 2
+                      ? "border-blue-400 ring-1 ring-blue-300 dark:border-blue-600"
+                      : resolvedSec === 3
+                      ? "border-amber-400 ring-1 ring-amber-300 dark:border-amber-600"
+                      : ""
+                  }`}
+                />
+              </div>
+              {incomeInput ? (
+                <div className="text-[11px] flex items-center gap-1.5 mt-0.5">
+                  {resolvedSec ? (
+                    <>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold border ${
+                        resolvedSec === 1
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800"
+                          : resolvedSec === 2
+                          ? "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800"
+                          : "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800"
+                      }`}>
+                        ✓ SEC {resolvedSec}
+                      </span>
+                      <span className="text-muted-foreground">{activeBracket?.range}</span>
+                    </>
+                  ) : (
+                    <span className="text-rose-500 font-medium">Invalid — enter a positive number</span>
+                  )}
+                </div>
+              ) : (
+                <div className="text-[11px] text-muted-foreground/70 mt-0.5">
+                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">SEC 1</span> ≥ &#x20BE;500k &nbsp;&middot;&nbsp;
+                  <span className="font-semibold text-blue-600 dark:text-blue-400">SEC 2</span> &#x20BE;200k–499k &nbsp;&middot;&nbsp;
+                  <span className="font-semibold text-amber-600 dark:text-amber-400">SEC 3</span> &lt; &#x20BE;200k
+                </div>
+              )}
+            </div>
+
+            {/* MOSR selector */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                MOSR (1–4)
+              </label>
+              <div className="flex items-center gap-1">
+                {[1, 2, 3, 4].map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMosrInput(mosrInput === String(m) ? "" : String(m))}
+                    className={`h-9 w-9 rounded-lg border text-sm font-bold transition-all ${
+                      mosrInput === String(m)
+                        ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
+                        : "bg-background text-muted-foreground hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
+                    }`}
+                    title={`Select MOSR ${m}`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+              {mosrInput && (
+                <div className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium mt-0.5">
+                  MOSR {mosrInput} selected
+                </div>
+              )}
+            </div>
+
+            {/* Result card */}
+            {resolvedSec && resolvedMosr ? (
+              <div className={`flex-1 min-w-0 rounded-xl border-2 p-3 text-xs transition-all animate-in fade-in duration-200 ${
+                (lookupCellShortfall ?? 0) > 0
+                  ? "border-rose-300 bg-rose-50/80 dark:bg-rose-950/30 dark:border-rose-700"
+                  : "border-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/30 dark:border-emerald-700"
+              }`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Panel Slot Result
+                  </span>
+                  {(lookupCellShortfall ?? 0) > 0 ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-900/80 dark:text-rose-200 border border-rose-300 dark:border-rose-700">
+                      Shortfall Active ({lookupShortfallRegionCount} Region{lookupShortfallRegionCount !== 1 ? "s" : ""})
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/80 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700">
+                      ✓ Quota Fulfilled (0 Shortfall)
+                    </span>
+                  )}
+                </div>
+                <div className="font-bold text-base text-foreground leading-tight">
+                  SEC {resolvedSec} &times; MOSR {resolvedMosr}
+                </div>
+                <div className="text-muted-foreground mt-0.5 text-[11px]">{activeBracket?.desc}</div>
+
+                {(lookupCellShortfall ?? 0) > 0 ? (
+                  <>
+                    <div className="mt-2.5 pt-2 border-t border-rose-200 dark:border-rose-800/60 flex flex-wrap items-center gap-x-4 gap-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-muted-foreground text-[11px]">Total Shortfall:</span>
+                        <span className="font-extrabold text-sm text-rose-600 dark:text-rose-400">
+                          {lookupCellShortfall} households
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-muted-foreground text-[11px]">Regions needing this profile:</span>
+                        <span className="font-bold text-xs text-rose-700 dark:text-rose-300">
+                          {lookupShortfallRegionCount} region{lookupShortfallRegionCount !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-[11px] text-rose-700 dark:text-rose-300 font-semibold">
+                        &#8595; Table shows only cells with active shortfall
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setOnlyShortfallCells(!onlyShortfallCells)}
+                        className="text-[11px] font-medium underline text-primary hover:opacity-80"
+                      >
+                        {onlyShortfallCells ? "View all matrix cells" : "View shortfall cells only"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="mt-2 text-[11px] text-emerald-800 dark:text-emerald-300 font-medium pt-1 border-t border-emerald-200 dark:border-emerald-800/60">
+                    All regions have fully met their quota for SEC {resolvedSec} &times; MOSR {resolvedMosr}. There is no shortfall for this household type.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="flex-1 min-w-0 rounded-xl border border-dashed border-border p-3 text-xs text-muted-foreground items-center justify-center min-h-[76px] hidden sm:flex">
+                Fill both fields to pinpoint a panel slot and show shortfall cells
+              </div>
+            )}
+
+            {/* Clear button */}
+            {(incomeInput || mosrInput) && (
+              <button
+                type="button"
+                onClick={clearLookup}
+                className="h-9 px-3 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:border-foreground/50 transition-colors shrink-0 flex items-center gap-1 self-start sm:self-center mt-5 sm:mt-0"
+                title="Clear lookup"
+              >
+                <X className="size-3.5" />
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* 1. Creative Executive Insights Strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-3.5 bg-gradient-to-r from-muted/50 via-muted/20 to-muted/50 border-b text-xs shrink-0">
@@ -2787,72 +3814,20 @@ function InstalledHouseholdsTable({
 
       {/* 2. Top Interactive Toolbar */}
       <div className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between border-b bg-background shrink-0">
-        {/* Metric Selector Tabs */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] font-semibold text-muted-foreground uppercase mr-1">
-            Display:
+        {/* Quick Legend for Tgt, Live, Short */}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-semibold text-foreground">Columns:</span>
+          <span className="inline-flex items-center gap-1 font-mono text-[11px]">
+            <span className="font-semibold text-foreground">Tgt</span> (Target)
           </span>
-          <div className="inline-flex rounded-lg border bg-muted/40 p-0.5 text-xs">
-            <button
-              type="button"
-              onClick={() => setDisplayMetric("installed")}
-              className={`rounded-md px-2.5 py-1 font-medium transition-all ${
-                displayMetric === "installed"
-                  ? "bg-background text-foreground shadow-xs font-semibold"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Installed (Live)
-            </button>
-            <button
-              type="button"
-              onClick={() => setDisplayMetric("target")}
-              className={`rounded-md px-2.5 py-1 font-medium transition-all ${
-                displayMetric === "target"
-                  ? "bg-background text-foreground shadow-xs font-semibold"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Target Quota
-            </button>
-            <button
-              type="button"
-              onClick={() => setDisplayMetric("shortfall")}
-              className={`rounded-md px-2.5 py-1 font-medium transition-all ${
-                displayMetric === "shortfall"
-                  ? "bg-background text-foreground shadow-xs font-semibold"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Shortfall
-            </button>
-            <button
-              type="button"
-              onClick={() => setDisplayMetric("fulfillment")}
-              className={`rounded-md px-2.5 py-1 font-medium transition-all ${
-                displayMetric === "fulfillment"
-                  ? "bg-background text-foreground shadow-xs font-semibold"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              % Fulfilled
-            </button>
-          </div>
-
-          {/* Heatmap intensity toggle */}
-          <button
-            type="button"
-            onClick={() => setHeatmapEnabled(!heatmapEnabled)}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-all ${
-              heatmapEnabled
-                ? "bg-amber-100 border-amber-300 text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200"
-                : "bg-background text-muted-foreground hover:text-foreground"
-            }`}
-            title="Toggle data-density heatmap coloring on cells"
-          >
-            <Flame className="size-3.5" />
-            <span>Heatmap</span>
-          </button>
+          <span>·</span>
+          <span className="inline-flex items-center gap-1 font-mono text-[11px]">
+            <span className="font-bold text-blue-600 dark:text-blue-400">Live</span> (Active HHs)
+          </span>
+          <span>·</span>
+          <span className="inline-flex items-center gap-1 font-mono text-[11px]">
+            <span className="font-bold text-rose-600 dark:text-rose-400">Short</span> (Shortfall: -X · Extra: +X)
+          </span>
         </div>
 
         {/* Right Tools: Filter + Copy + CSV */}
@@ -2943,7 +3918,7 @@ function InstalledHouseholdsTable({
             <span className="font-medium">SEC {hoveredCell.sec} / MOSR {hoveredCell.mosr}</span>
             <span>:</span>
             <span className="font-bold text-blue-600 dark:text-blue-400">
-              {hoveredCell.val} Live
+              {hoveredCell.val} Active
             </span>
             <span className="text-muted-foreground">
               (Target: {hoveredCell.targetVal} · Shortfall: {hoveredCell.shortfallVal} · {hoveredCell.metPct.toFixed(1)}% Met)
@@ -2976,55 +3951,77 @@ function InstalledHouseholdsTable({
           isExtended ? "flex-1 min-h-0 overflow-y-auto" : ""
         }`}
       >
-        <table className="w-full min-w-[960px] border-collapse text-xs font-sans">
+        <table className="w-full min-w-[1280px] border-collapse text-xs font-sans">
           <thead className={isExtended ? "sticky top-0 z-30 shadow-xs" : undefined}>
-            {/* Title Banner spanning all 17 columns */}
+            {/* Title Banner spanning all 49 columns */}
             <tr>
               <th
-                colSpan={17}
-                className="bg-[#5b8ec9] dark:bg-blue-900 text-white font-bold py-2.5 px-4 text-center text-sm tracking-wide border border-[#4a77bb] dark:border-blue-800 shadow-inner select-none"
+                colSpan={49}
+                className="bg-[#4a77bb] dark:bg-blue-900 text-white font-bold py-2.5 px-4 text-center sm:text-right text-sm tracking-wide border border-[#3b66a8] dark:border-blue-800 shadow-inner select-none"
               >
                 Installed Households
               </th>
             </tr>
 
-            {/* Row 1: SEC headers */}
-            <tr className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold select-none">
+            {/* Row 1: Region/MOSR (rowSpan=3) | SEC 1 (colSpan=12) | 1 Total (colSpan=3, rowSpan=2) | SEC 2... | Grand Total (colSpan=3, rowSpan=2) */}
+            <tr className="bg-[#dbe8f5] dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold select-none text-center">
               <th
+                rowSpan={3}
                 onClick={() => toggleSort("region_name")}
-                className="border border-slate-300 dark:border-slate-700 px-3 py-2 text-left w-36 font-bold bg-slate-100 dark:bg-slate-800 sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                className="border border-slate-300 dark:border-slate-700 px-3 py-2 text-left w-40 font-bold bg-[#dbe8f5] dark:bg-slate-800 sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors align-middle"
                 title="Click to sort by Region"
               >
                 <div className="flex items-center justify-between">
-                  <span>SEC</span>
+                  <span>Region/MOSR</span>
                   {renderSortIndicator(sortKey === "region_name", sortDesc)}
                 </div>
               </th>
 
-              {SEC_LABELS.map((sec) => (
-                <Fragment key={`sec-header-group-${sec}`}>
-                  <th
-                    colSpan={4}
-                    className="border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-bold tracking-wide bg-slate-100 dark:bg-slate-800"
-                  >
-                    {sec}
-                  </th>
-                  <th
-                    onClick={() => toggleSort(`sec_${sec}_total`)}
-                    className="border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-bold bg-sky-50 dark:bg-sky-950/60 text-sky-900 dark:text-sky-200 cursor-pointer hover:bg-sky-100 dark:hover:bg-sky-900/80 transition-colors"
-                    title={`Click to sort by SEC ${sec} Total`}
-                  >
-                    <div className="flex items-center justify-center gap-1">
-                      <span>{sec} Total</span>
-                      {renderSortIndicator(sortKey === `sec_${sec}_total`, sortDesc)}
-                    </div>
-                  </th>
-                </Fragment>
-              ))}
+              {SEC_LABELS.map((sec) => {
+                const isSecMatch = lookupHighlight?.sec === sec;
+                const isDimmed = lookupHighlight && onlyShortfallCells && !isSecMatch;
+
+                return (
+                  <Fragment key={`sec-header-group-${sec}`}>
+                    <th
+                      colSpan={12}
+                      className={`border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-bold tracking-wide transition-colors ${
+                        isSecMatch
+                          ? "bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-100"
+                          : isDimmed
+                          ? "bg-slate-100/40 dark:bg-slate-800/40 text-slate-400 dark:text-slate-600"
+                          : "bg-[#dbe8f5] dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                      }`}
+                    >
+                      {sec}{isSecMatch ? " ★" : ""}
+                    </th>
+                    <th
+                      colSpan={3}
+                      rowSpan={2}
+                      onClick={() => toggleSort(`sec_${sec}_total`)}
+                      className={`border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-bold transition-colors cursor-pointer align-middle ${
+                        isSecMatch
+                          ? "bg-rose-100 dark:bg-rose-950 text-rose-900 dark:text-rose-200"
+                          : isDimmed
+                          ? "bg-sky-50/40 dark:bg-sky-950/20 text-slate-400 dark:text-slate-600"
+                          : "bg-[#cadcf2] dark:bg-sky-950/70 text-slate-900 dark:text-sky-100 hover:bg-sky-200"
+                      }`}
+                      title={`Click to sort by SEC ${sec} Total`}
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        <span>{sec} Total</span>
+                        {renderSortIndicator(sortKey === `sec_${sec}_total`, sortDesc)}
+                      </div>
+                    </th>
+                  </Fragment>
+                );
+              })}
 
               <th
+                colSpan={3}
+                rowSpan={2}
                 onClick={() => toggleSort("grand_total")}
-                className="border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-bold bg-blue-100/80 dark:bg-blue-950/80 text-blue-950 dark:text-blue-100 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-900 transition-colors"
+                className="border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-bold cursor-pointer transition-colors bg-[#bcd2ee] dark:bg-blue-950/80 text-blue-950 dark:text-blue-100 hover:bg-blue-200 dark:hover:bg-blue-900 align-middle"
                 title="Click to sort by Grand Total"
               >
                 <div className="flex items-center justify-center gap-1">
@@ -3034,29 +4031,23 @@ function InstalledHouseholdsTable({
               </th>
             </tr>
 
-            {/* Row 2: Region/MOSR headers */}
-            <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold select-none">
-              <th
-                onClick={() => toggleSort("region_name")}
-                className="border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-left font-bold bg-slate-100 dark:bg-slate-800 sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-              >
-                Region/MOSR
-              </th>
+            {/* Row 2: MOSR numbers 1, 2, 3, 4 under each SEC */}
+            <tr className="bg-[#e8f1fa] dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 font-bold select-none text-center">
               {SEC_LABELS.map((sec) => (
-                <Fragment key={`sec-mosr-group-${sec}`}>
+                <Fragment key={`sec-mosr-headers-${sec}`}>
                   {MOSR_LABELS.map((mosr) => {
                     const colKey = `sec_${sec}_mosr_${mosr}`;
                     const isSorted = sortKey === colKey;
-                    const isHovered = hoveredCell?.sec === sec && hoveredCell?.mosr === mosr;
-
+                    const isMatch = lookupHighlight?.sec === sec && lookupHighlight?.mosr === mosr;
                     return (
                       <th
                         key={`sec-${sec}-mosr-hdr-${mosr}`}
+                        colSpan={3}
                         onClick={() => toggleSort(colKey)}
-                        className={`border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-bold w-12 cursor-pointer transition-colors ${
-                          isHovered
-                            ? "bg-blue-100 text-blue-900 dark:bg-blue-900 dark:text-blue-100"
-                            : "hover:bg-slate-200 dark:hover:bg-slate-700"
+                        className={`border border-slate-300 dark:border-slate-700 px-1 py-1 text-center font-bold cursor-pointer transition-colors ${
+                          isMatch
+                            ? "bg-rose-200 text-rose-900 dark:bg-rose-900 dark:text-rose-100 ring-2 ring-inset ring-rose-500"
+                            : "bg-[#e8f1fa] dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700"
                         }`}
                         title={`Click to sort by SEC ${sec} MOSR ${mosr}`}
                       >
@@ -3067,17 +4058,31 @@ function InstalledHouseholdsTable({
                       </th>
                     );
                   })}
-                  <th
-                    key={`sec-${sec}-empty-hdr`}
-                    className="border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center bg-sky-50 dark:bg-sky-950/60 w-16"
-                  >
-                    &nbsp;
-                  </th>
                 </Fragment>
               ))}
-              <th className="border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center bg-blue-100/80 dark:bg-blue-950/80 w-20">
-                &nbsp;
-              </th>
+            </tr>
+
+            {/* Row 3: Tgt | Live | Short subheaders under each MOSR, SEC Total, Grand Total */}
+            <tr className="bg-[#f1f6fc] dark:bg-slate-900 text-[11px] font-semibold text-slate-600 dark:text-slate-300 select-none text-center">
+              {SEC_LABELS.map((sec) => (
+                <Fragment key={`sec-triplet-subheaders-${sec}`}>
+                  {MOSR_LABELS.map((mosr) => (
+                    <Fragment key={`sec-${sec}-mosr-${mosr}-sub`}>
+                      <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-11 text-center font-medium">Tgt</th>
+                      <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-11 text-center font-semibold text-blue-700 dark:text-blue-300">Live</th>
+                      <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-11 text-center font-semibold text-rose-700 dark:text-rose-300">Short</th>
+                    </Fragment>
+                  ))}
+                  {/* SEC Total Subheaders */}
+                  <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-medium bg-[#cadcf2]/70 dark:bg-sky-950/40">Tgt</th>
+                  <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-semibold bg-[#cadcf2]/70 dark:bg-sky-950/40 text-blue-800 dark:text-blue-200">Live</th>
+                  <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-semibold bg-[#cadcf2]/70 dark:bg-sky-950/40 text-rose-800 dark:text-rose-200">Short</th>
+                </Fragment>
+              ))}
+              {/* Grand Total Subheaders */}
+              <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-medium bg-[#bcd2ee]/70 dark:bg-blue-950/40">Tgt</th>
+              <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-extrabold bg-[#bcd2ee]/70 dark:bg-blue-950/40 text-blue-900 dark:text-blue-100">Live</th>
+              <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-extrabold bg-[#bcd2ee]/70 dark:bg-blue-950/40 text-rose-900 dark:text-rose-100">Short</th>
             </tr>
           </thead>
 
@@ -3085,17 +4090,37 @@ function InstalledHouseholdsTable({
             {sortedRows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={17}
-                  className="text-center py-8 text-muted-foreground text-xs"
+                  colSpan={49}
+                  className="text-center py-12 text-muted-foreground text-xs"
                 >
-                  No regions found matching "{searchQuery}"
+                  {lookupHighlight ? (
+                    <div className="flex flex-col items-center justify-center gap-2 py-4">
+                      <div className="flex size-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                        <Check className="size-5" />
+                      </div>
+                      <span className="text-emerald-700 dark:text-emerald-300 font-bold text-sm">
+                        No Shortfall Found for SEC {lookupHighlight.sec} &times; MOSR {lookupHighlight.mosr}
+                      </span>
+                      <span className="text-muted-foreground text-xs max-w-md text-center">
+                        All regions have fully satisfied or exceeded their quota for this demographic profile.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={clearLookup}
+                        className="mt-2 text-xs font-semibold text-primary underline hover:opacity-80"
+                      >
+                        Clear search to view all installed households
+                      </button>
+                    </div>
+                  ) : (
+                    <span>No regions found matching &quot;{searchQuery}&quot;</span>
+                  )}
                 </td>
               </tr>
             ) : (
               sortedRows.map((row) => {
                 const isRowHovered = hoveredCell?.regionName === row.region_name;
                 const rowGrandLive = num(row.grand_total);
-                const grandTotalCell = getGrandTotalValue(row, displayMetric);
 
                 return (
                   <tr
@@ -3109,7 +4134,7 @@ function InstalledHouseholdsTable({
                     {/* Region Cell: Clean, with subtle click to drill down */}
                     <td
                       onClick={() => onRegionClick && row.region_code && onRegionClick(row.region_code)}
-                      className={`border border-slate-300 dark:border-slate-700 px-3 py-2 text-left font-medium text-slate-900 dark:text-slate-100 whitespace-nowrap sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.06)] transition-colors ${
+                      className={`border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-left font-medium text-slate-900 dark:text-slate-100 whitespace-nowrap sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.06)] transition-colors ${
                         onRegionClick ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
                       } ${
                         isRowHovered
@@ -3127,114 +4152,214 @@ function InstalledHouseholdsTable({
                     </td>
 
                     {/* SEC Matrix Columns */}
-                    {SEC_LABELS.map((sec) => (
-                      <Fragment key={`${row.region_name}-sec-${sec}`}>
-                        {MOSR_LABELS.map((mosr) => {
-                          const liveVal = num(row[`sec_${sec}_mosr_${mosr}`]);
-                          const targetVal = num(row[`sec_${sec}_mosr_${mosr}_target`]);
-                          const shortfallVal = num(row[`sec_${sec}_mosr_${mosr}_shortfall`]);
-                          const metPct = num(row[`sec_${sec}_mosr_${mosr}_met_pct`]);
-                          const colTotal = num(totalRow[`sec_${sec}_mosr_${mosr}`]);
+                    {SEC_LABELS.map((sec) => {
+                      const secTarget = num(row[`sec_${sec}_target`]);
+                      const secLive = num(row[`sec_${sec}_total`]);
+                      const secSf = formatShortfall(secTarget, secLive);
 
-                          const cellData = getCellValue(row, sec, mosr, displayMetric);
-                          const isCellHovered =
-                            hoveredCell?.regionName === row.region_name &&
-                            hoveredCell?.sec === sec &&
-                            hoveredCell?.mosr === mosr;
-                          const isColHovered =
-                            hoveredCell?.sec === sec && hoveredCell?.mosr === mosr;
+                      return (
+                        <Fragment key={`${row.region_name}-sec-${sec}`}>
+                          {MOSR_LABELS.map((mosr) => {
+                            const liveVal = num(row[`sec_${sec}_mosr_${mosr}`]);
+                            const targetVal = num(row[`sec_${sec}_mosr_${mosr}_target`]);
+                            const sf = formatShortfall(targetVal, liveVal);
+                            const metPct = num(row[`sec_${sec}_mosr_${mosr}_met_pct`]);
+                            const colTotal = num(totalRow[`sec_${sec}_mosr_${mosr}`]);
 
-                          // Heatmap styling
-                          const heatmapBg =
-                            heatmapEnabled && displayMetric === "installed"
-                              ? getHeatmapBg(liveVal, maxLiveCell)
-                              : undefined;
+                            const isLookupMatch =
+                              lookupHighlight?.sec === sec && lookupHighlight?.mosr === mosr;
+                            const isCellHovered =
+                              hoveredCell?.regionName === row.region_name &&
+                              hoveredCell?.sec === sec &&
+                              hoveredCell?.mosr === mosr;
 
-                          return (
-                            <td
-                              key={`${row.region_name}-${sec}-${mosr}`}
-                              onMouseEnter={() =>
-                                setHoveredCell({
-                                  regionName: row.region_name,
-                                  sec,
-                                  mosr,
-                                  val: liveVal,
-                                  targetVal,
-                                  shortfallVal,
-                                  metPct,
-                                  regionTotal: rowGrandLive,
-                                  colTotal,
-                                })
-                              }
-                              onMouseLeave={() => setHoveredCell(null)}
-                              style={heatmapBg ? { backgroundColor: heatmapBg } : undefined}
-                              className={`border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-mono tabular-nums transition-all ${
-                                isCellHovered
-                                  ? "ring-2 ring-blue-500 font-bold z-10 scale-[1.05] shadow-xs"
-                                  : isColHovered
-                                  ? "bg-blue-50/50 dark:bg-blue-950/30"
-                                  : ""
-                              } ${cellData.className}`}
-                            >
-                              {cellData.display}
-                            </td>
-                          );
-                        })}
+                            const highlightClass = isLookupMatch
+                              ? "bg-rose-50/90 dark:bg-rose-950/60 ring-1 ring-rose-400"
+                              : isCellHovered
+                              ? "bg-blue-100/70 dark:bg-blue-900/50"
+                              : "";
 
-                        {/* SEC Group Total Column */}
-                        <td
-                          className="border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-mono tabular-nums font-bold bg-sky-50/70 dark:bg-sky-950/30 text-sky-950 dark:text-sky-200"
-                        >
-                          {getGroupTotalValue(row, sec, displayMetric).display}
-                        </td>
-                      </Fragment>
-                    ))}
+                            return (
+                              <Fragment key={`${row.region_name}-${sec}-${mosr}`}>
+                                {/* Tgt */}
+                                <td
+                                  onMouseEnter={() =>
+                                    setHoveredCell({
+                                      regionName: row.region_name,
+                                      sec,
+                                      mosr,
+                                      val: liveVal,
+                                      targetVal,
+                                      shortfallVal: targetVal - liveVal,
+                                      metPct,
+                                      regionTotal: rowGrandLive,
+                                      colTotal,
+                                    })
+                                  }
+                                  onMouseLeave={() => setHoveredCell(null)}
+                                  className={`border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums ${highlightClass} ${
+                                    targetVal === 0
+                                      ? "text-slate-400 dark:text-slate-500 font-normal"
+                                      : "text-slate-700 dark:text-slate-200 font-medium"
+                                  }`}
+                                >
+                                  {targetVal === 0 ? "—" : targetVal}
+                                </td>
 
-                    {/* Region Grand Total Column */}
-                    <td
-                      className="border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-mono tabular-nums font-bold bg-blue-50/90 dark:bg-blue-950/50 text-blue-950 dark:text-blue-100"
-                    >
-                      {grandTotalCell.display}
-                    </td>
+                                {/* Live */}
+                                <td
+                                  onMouseEnter={() =>
+                                    setHoveredCell({
+                                      regionName: row.region_name,
+                                      sec,
+                                      mosr,
+                                      val: liveVal,
+                                      targetVal,
+                                      shortfallVal: targetVal - liveVal,
+                                      metPct,
+                                      regionTotal: rowGrandLive,
+                                      colTotal,
+                                    })
+                                  }
+                                  onMouseLeave={() => setHoveredCell(null)}
+                                  className={`border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums ${highlightClass} ${
+                                    liveVal === 0
+                                      ? "text-slate-300 dark:text-slate-600 font-normal"
+                                      : "text-slate-900 dark:text-slate-100 font-bold"
+                                  }`}
+                                >
+                                  {liveVal}
+                                </td>
+
+                                {/* Short */}
+                                <td
+                                  onMouseEnter={() =>
+                                    setHoveredCell({
+                                      regionName: row.region_name,
+                                      sec,
+                                      mosr,
+                                      val: liveVal,
+                                      targetVal,
+                                      shortfallVal: targetVal - liveVal,
+                                      metPct,
+                                      regionTotal: rowGrandLive,
+                                      colTotal,
+                                    })
+                                  }
+                                  onMouseLeave={() => setHoveredCell(null)}
+                                  className={`border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums ${highlightClass} ${sf.className}`}
+                                >
+                                  {sf.display}
+                                </td>
+                              </Fragment>
+                            );
+                          })}
+
+                          {/* SEC Group Total Column: Tgt, Live, Short */}
+                          <td className="border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 text-slate-700 dark:text-slate-200 font-medium">
+                            {secTarget === 0 ? "—" : secTarget}
+                          </td>
+                          <td className="border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 text-slate-900 dark:text-slate-100 font-bold">
+                            {secLive}
+                          </td>
+                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 ${secSf.className}`}>
+                            {secSf.display}
+                          </td>
+                        </Fragment>
+                      );
+                    })}
+
+                    {/* Region Grand Total Columns: Tgt, Live, Short */}
+                    {(() => {
+                      const gt = num(row.grand_target);
+                      const gl = num(row.grand_total);
+                      const gsf = formatShortfall(gt, gl);
+                      return (
+                        <>
+                          <td className="border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#bcd2ee]/60 dark:bg-blue-950/40 text-slate-700 dark:text-slate-200 font-medium">
+                            {gt === 0 ? "—" : gt}
+                          </td>
+                          <td className="border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#bcd2ee]/60 dark:bg-blue-950/40 text-blue-950 dark:text-blue-100 font-extrabold">
+                            {gl}
+                          </td>
+                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#bcd2ee]/60 dark:bg-blue-950/40 ${gsf.className}`}>
+                            {gsf.display}
+                          </td>
+                        </>
+                      );
+                    })()}
                   </tr>
                 );
               })
             )}
 
             {/* Total Row */}
-            <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-t-2 border-slate-400 dark:border-slate-600">
-              <td className="border border-slate-300 dark:border-slate-700 px-3 py-2.5 text-left font-bold text-slate-900 dark:text-slate-100 bg-slate-100 dark:bg-slate-800 sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+            <tr className="bg-[#dbe8f5] dark:bg-slate-800 font-bold border-t-2 border-slate-400 dark:border-slate-600">
+              <td className="border border-slate-300 dark:border-slate-700 px-3 py-2 text-left font-bold text-slate-900 dark:text-slate-100 bg-[#dbe8f5] dark:bg-slate-800 sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                 Total
               </td>
 
-              {SEC_LABELS.map((sec) => (
-                <Fragment key={`total-sec-${sec}`}>
-                  {MOSR_LABELS.map((mosr) => {
-                    const colCell = getCellValue(totalRow, sec, mosr, displayMetric);
-                    const isColHovered =
-                      hoveredCell?.sec === sec && hoveredCell?.mosr === mosr;
+              {SEC_LABELS.map((sec) => {
+                const totalSecTarget = num(totalRow[`sec_${sec}_target`]);
+                const totalSecLive = num(totalRow[`sec_${sec}_total`]);
+                const totalSecSf = formatShortfall(totalSecTarget, totalSecLive);
 
-                    return (
-                      <td
-                        key={`total-${sec}-${mosr}`}
-                        className={`border border-slate-300 dark:border-slate-700 px-2 py-2.5 text-center font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100 transition-colors ${
-                          isColHovered ? "bg-blue-200/60 dark:bg-blue-900/60" : ""
-                        }`}
-                      >
-                        {colCell.display}
-                      </td>
-                    );
-                  })}
+                return (
+                  <Fragment key={`total-sec-${sec}`}>
+                    {MOSR_LABELS.map((mosr) => {
+                      const t = num(totalRow[`sec_${sec}_mosr_${mosr}_target`]);
+                      const l = num(totalRow[`sec_${sec}_mosr_${mosr}`]);
+                      const sf = formatShortfall(t, l);
+                      const isMatch = lookupHighlight?.sec === sec && lookupHighlight?.mosr === mosr;
 
-                  <td className="border border-slate-300 dark:border-slate-700 px-2 py-2.5 text-center font-mono tabular-nums font-bold bg-sky-100/80 dark:bg-sky-900/60 text-sky-950 dark:text-sky-100">
-                    {getGroupTotalValue(totalRow, sec, displayMetric).display}
-                  </td>
-                </Fragment>
-              ))}
+                      return (
+                        <Fragment key={`total-${sec}-${mosr}`}>
+                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums font-medium ${isMatch ? "bg-rose-100 dark:bg-rose-950" : ""}`}>
+                            {t === 0 ? "—" : t}
+                          </td>
+                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100 ${isMatch ? "bg-rose-100 dark:bg-rose-950" : ""}`}>
+                            {l}
+                          </td>
+                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums ${sf.className} ${isMatch ? "bg-rose-100 dark:bg-rose-950" : ""}`}>
+                            {sf.display}
+                          </td>
+                        </Fragment>
+                      );
+                    })}
 
-              <td className="border border-slate-300 dark:border-slate-700 px-2 py-2.5 text-center font-mono text-sm tabular-nums font-extrabold bg-blue-100 dark:bg-blue-900/80 text-blue-950 dark:text-blue-50">
-                {getGrandTotalValue(totalRow, displayMetric).display}
-              </td>
+                    {/* SEC Total */}
+                    <td className="border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 font-bold text-slate-800 dark:text-slate-200">
+                      {totalSecTarget === 0 ? "—" : totalSecTarget}
+                    </td>
+                    <td className="border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 font-extrabold text-slate-900 dark:text-slate-100">
+                      {totalSecLive}
+                    </td>
+                    <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 ${totalSecSf.className}`}>
+                      {totalSecSf.display}
+                    </td>
+                  </Fragment>
+                );
+              })}
+
+              {/* Grand Total Row */}
+              {(() => {
+                const totalGt = num(totalRow.grand_target);
+                const totalGl = num(totalRow.grand_total);
+                const totalGsf = formatShortfall(totalGt, totalGl);
+                return (
+                  <>
+                    <td className="border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#bcd2ee] dark:bg-blue-950 font-bold text-slate-800 dark:text-slate-200">
+                      {totalGt === 0 ? "—" : totalGt}
+                    </td>
+                    <td className="border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono text-sm tabular-nums font-extrabold bg-[#bcd2ee] dark:bg-blue-950 text-blue-950 dark:text-blue-50">
+                      {totalGl}
+                    </td>
+                    <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#bcd2ee] dark:bg-blue-950 ${totalGsf.className}`}>
+                      {totalGsf.display}
+                    </td>
+                  </>
+                );
+              })()}
             </tr>
           </tbody>
         </table>
@@ -3254,26 +4379,37 @@ function getCellValue(
 ): { display: string; className: string } {
   const live = num(row[`sec_${sec}_mosr_${mosr}`]);
   const target = num(row[`sec_${sec}_mosr_${mosr}_target`]);
-  const shortfall = num(row[`sec_${sec}_mosr_${mosr}_shortfall`]);
+  const net = num(row[`sec_${sec}_mosr_${mosr}_shortfall`]); // signed: positive = shortfall, negative = surplus
   const metPct = num(row[`sec_${sec}_mosr_${mosr}_met_pct`]);
 
   if (metric === "target") {
     return {
-      display: String(target),
+      display: target === 0 ? "—" : String(target),
       className: target === 0 ? "text-slate-400 dark:text-slate-500 font-normal" : "text-slate-800 dark:text-slate-100 font-medium",
     };
   }
 
   if (metric === "shortfall") {
-    if (shortfall === 0) {
+    if (target === 0) {
+      return { display: "—", className: "text-slate-400 dark:text-slate-500 font-normal" };
+    }
+    if (net === 0) {
       return {
         display: "0",
-        className: "text-emerald-600 dark:text-emerald-400 font-normal",
+        className: "text-emerald-600 dark:text-emerald-400 font-semibold",
       };
     }
+    if (net > 0) {
+      // shortfall: need more households
+      return {
+        display: `-${net}`,
+        className: "text-rose-600 dark:text-rose-400 font-bold",
+      };
+    }
+    // surplus: have more than target
     return {
-      display: `+${shortfall}`,
-      className: "text-rose-600 dark:text-rose-400 font-bold",
+      display: `+${Math.abs(net)}`,
+      className: "text-emerald-600 dark:text-emerald-400 font-bold",
     };
   }
 
@@ -3292,7 +4428,7 @@ function getCellValue(
     };
   }
 
-  // Default: Installed (Live)
+  // Default: Installed (Active)
   return {
     display: String(live),
     className:
@@ -3308,11 +4444,16 @@ function getGroupTotalValue(
   metric: MatrixMetric
 ): { display: string } {
   if (metric === "target") {
-    return { display: String(num(row[`sec_${sec}_target`])) };
+    const t = num(row[`sec_${sec}_target`]);
+    return { display: t === 0 ? "—" : String(t) };
   }
   if (metric === "shortfall") {
-    const sf = num(row[`sec_${sec}_shortfall`]);
-    return { display: sf > 0 ? `+${sf}` : "0" };
+    const net = num(row[`sec_${sec}_shortfall`]); // signed
+    const target = num(row[`sec_${sec}_target`]);
+    if (target === 0) return { display: "—" };
+    if (net === 0) return { display: "0" };
+    if (net > 0) return { display: `-${net}` }; // shortfall
+    return { display: `+${Math.abs(net)}` }; // surplus
   }
   if (metric === "fulfillment") {
     const met = num(row[`sec_${sec}_met_pct`]);
@@ -3329,8 +4470,12 @@ function getGrandTotalValue(
     return { display: String(num(row.grand_target)) };
   }
   if (metric === "shortfall") {
-    const sf = num(row.grand_shortfall);
-    return { display: sf > 0 ? `+${sf}` : "0" };
+    const net = num(row.grand_shortfall); // signed
+    const target = num(row.grand_target);
+    if (target === 0) return { display: "—" };
+    if (net === 0) return { display: "0" };
+    if (net > 0) return { display: `-${net}` }; // shortfall
+    return { display: `+${Math.abs(net)}` }; // surplus
   }
   if (metric === "fulfillment") {
     const met = num(row.grand_met_pct);

@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, getStoredToken } from "@/lib/api";
+import { api, getStoredToken, clearStoredTokens, isSessionExpired } from "@/lib/api";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppSidebar } from "@/components/app-sidebar";
 import {
@@ -43,6 +43,13 @@ export default function DashboardLayout({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // 1. Immediate check: If session has exceeded absolute 2-hour timeout, log out
+    if (isSessionExpired()) {
+      clearStoredTokens();
+      router.replace("/login?reason=timeout");
+      return;
+    }
+
     const token = getStoredToken();
     if (!token) {
       router.replace("/login");
@@ -63,13 +70,49 @@ export default function DashboardLayout({
           return;
         }
 
+        // Only developer and admin are permitted
+        const role = res.user.role ?? "";
+        if (role !== "admin" && role !== "developer") {
+          router.replace("/login?error=invalid_role");
+          return;
+        }
+
         setUser(res.user);
         setLoading(false);
       })
       .catch((err) => {
         console.error("Failed to load user session:", err);
-        router.replace("/login");
+        if (isSessionExpired()) {
+          clearStoredTokens();
+          router.replace("/login?reason=timeout");
+        } else {
+          router.replace("/login");
+        }
       });
+
+    // 2. Continuous 2-hour absolute timeout watchdog
+    const checkTimeout = () => {
+      if (isSessionExpired()) {
+        clearStoredTokens();
+        router.replace("/login?reason=timeout");
+      }
+    };
+
+    const interval = setInterval(checkTimeout, 5000); // Check every 5 seconds
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        checkTimeout();
+      }
+    };
+
+    window.addEventListener("visibilitychange", onVisibilityOrFocus);
+    window.addEventListener("focus", onVisibilityOrFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("visibilitychange", onVisibilityOrFocus);
+      window.removeEventListener("focus", onVisibilityOrFocus);
+    };
   }, [router]);
 
   const email = user?.email ?? "";

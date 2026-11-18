@@ -40,6 +40,19 @@ export default function LoginPage() {
     setTheme(initialTheme);
     document.documentElement.classList.toggle("dark", initialTheme === "dark");
     document.documentElement.style.colorScheme = initialTheme === "dark" ? "dark" : "light";
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const reason = params.get("reason");
+      const err = params.get("error");
+      if (reason === "timeout") {
+        setError("Your session timed out after 2 hours. Please log in again to continue.");
+      } else if (err === "invalid_role") {
+        setError("Access restricted. Only accounts with the developer or admin role are permitted.");
+      } else if (err === "unauthorized") {
+        setError("Unauthorized domain. Please use your @inditronics.com company email.");
+      }
+    }
   }, []);
 
   const toggleTheme = () => {

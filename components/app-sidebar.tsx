@@ -15,6 +15,7 @@ import {
   Users,
   BarChart3,
   BellRing,
+  Tv,
   UserCog,
 } from "lucide-react";
 
@@ -51,21 +52,9 @@ type AppSidebarProps = {
 };
 
 const ROLE_DETAILS: Record<string, { label: string; description: string }> = {
-  call_center: {
-    label: "Call Center",
-    description: "Call Center Operations & Household Calling",
-  },
-  field_executive: {
-    label: "Field Executive",
-    description: "On-site Installation & Status Updates",
-  },
   admin: {
     label: "Administrator",
     description: "Full Admin Access & User Management",
-  },
-  data_team: {
-    label: "Data Team",
-    description: "Data Analytics & Verification",
   },
   developer: {
     label: "Developer",
@@ -200,6 +189,17 @@ export function AppSidebar({
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  render={<Link href="/dashboard/panel/viewership" />}
+                  isActive={pathname.startsWith("/dashboard/panel/viewership")}
+                  tooltip="Viewership"
+                >
+                  <Tv />
+                  <span>Viewership</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
               {isAdmin && (
                 <SidebarMenuItem>
                   <SidebarMenuButton
@@ -208,7 +208,7 @@ export function AppSidebar({
                     tooltip="User Management"
                   >
                     <UserCog />
-                    <span>Users</span>
+                    <span>User Managment</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}

@@ -28,9 +28,6 @@ import {
 import { api } from "@/lib/api";
 
 const ROLES = [
-  { value: "data_team", label: "Data Team" },
-  { value: "call_center", label: "Call Center" },
-  { value: "field_executive", label: "Field Executive" },
   { value: "developer", label: "Developer" },
   { value: "admin", label: "Admin" },
 ] as const;
@@ -63,7 +60,7 @@ export default function UsersManagement() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [newRole, setNewRole] = useState<AppRole>("data_team");
+  const [newRole, setNewRole] = useState<AppRole>("developer");
 
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -112,7 +109,7 @@ export default function UsersManagement() {
 
       setEmail("");
       setPassword("");
-      setNewRole("data_team");
+      setNewRole("developer");
 
       setSuccess(`User ${result.email} was created successfully.`);
 
@@ -242,9 +239,9 @@ export default function UsersManagement() {
             <ShieldCheck className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">5</div>
+            <div className="text-2xl font-bold">2</div>
             <CardDescription>
-              Data Team, Call Center, Field Executive, Developer, and Admin.
+              Admin and Developer
             </CardDescription>
           </CardContent>
         </Card>
