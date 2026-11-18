@@ -2177,14 +2177,14 @@ export default function PanelPage() {
 
           {/* Section 3: Target Quota table & Installed Households table */}
           <div className="space-y-6">
-            <TargetQuotaTable
+            {/* <TargetQuotaTable
               regions={regionPreviews.length > 0 ? regionPreviews : regions.map((region) => ({
                 region_code: region.region_code,
                 region_name: region.region_name,
                 cells: [],
               }))}
               onRegionClick={handleInlineRegionOpen}
-            />
+            /> */}
 
             <InstalledHouseholdsTable
               regions={regionPreviews.length > 0 ? regionPreviews : regions.map((region) => ({
@@ -3165,85 +3165,11 @@ function InstalledHouseholdsTable({
   const [copied, setCopied] = useState(false);
   const [sortKey, setSortKey] = useState<string | null>(null);
 
-  // ── Household Classifier State ──────────────────────────────────────────────
-  const [incomeInput, setIncomeInput] = useState("");
-  const [mosrInput, setMosrInput] = useState("");
-  const [lookupHighlight, setLookupHighlight] = useState<{ sec: number; mosr: number } | null>(null);
-  const [onlyShortfallCells, setOnlyShortfallCells] = useState(true);
+  // ── Matrix View & Slot Filter State ──────────────────────────────────────────
+  const [matrixView, setMatrixView] = useState<"installed_shortfall" | "target" | "fulfillment">("installed_shortfall");
+  const [secFilter, setSecFilter] = useState<number | null>(null);
+  const [mosrFilter, setMosrFilter] = useState<number | null>(null);
 
-  // SEC income bracket definitions (AMD monthly household income)
-  const SEC_INCOME_BRACKETS = [
-    {
-      sec: 1,
-      label: "SEC 1 — High Income",
-      range: "≥ ₾500,000 / month",
-      min: 500000,
-      max: Infinity,
-      color: "emerald",
-      desc: "High-income segment: monthly household income ≥ 500,000 AMD",
-    },
-    {
-      sec: 2,
-      label: "SEC 2 — Middle Income",
-      range: "₾200,000 – ₾499,999 / month",
-      min: 200000,
-      max: 499999,
-      color: "blue",
-      desc: "Middle-income segment: monthly household income 200,000–499,999 AMD",
-    },
-    {
-      sec: 3,
-      label: "SEC 3 — Lower Income",
-      range: "< ₾200,000 / month",
-      min: 0,
-      max: 199999,
-      color: "amber",
-      desc: "Lower-income segment: monthly household income below 200,000 AMD",
-    },
-  ];
-
-  // Resolve SEC from income value
-  const resolvedSec = useMemo(() => {
-    const val = Number(incomeInput.replace(/[^0-9]/g, ""));
-    if (!val || isNaN(val)) return null;
-    const bracket = SEC_INCOME_BRACKETS.find((b) => val >= b.min && val <= b.max);
-    return bracket ? bracket.sec : null;
-  }, [incomeInput]);
-
-  // Resolve MOSR from input
-  const resolvedMosr = useMemo(() => {
-    const val = Number(mosrInput.replace(/[^0-9]/g, ""));
-    if (!val || isNaN(val) || val < 1 || val > 4) return null;
-    return val as 1 | 2 | 3 | 4;
-  }, [mosrInput]);
-
-  // Computed SEC bracket info
-  const activeBracket = resolvedSec
-    ? SEC_INCOME_BRACKETS.find((b) => b.sec === resolvedSec) ?? null
-    : null;
-
-  // Total row value at lookup cell
-  const lookupCellTotal = useMemo(() => {
-    if (!resolvedSec || !resolvedMosr) return null;
-    return num(totalRow[`sec_${resolvedSec}_mosr_${resolvedMosr}`]);
-  }, [resolvedSec, resolvedMosr, totalRow]);
-
-  // Apply highlight on both resolved
-  useEffect(() => {
-    if (resolvedSec && resolvedMosr) {
-      setLookupHighlight({ sec: resolvedSec, mosr: resolvedMosr });
-      setOnlyShortfallCells(true);
-    } else {
-      setLookupHighlight(null);
-    }
-  }, [resolvedSec, resolvedMosr]);
-
-  const clearLookup = () => {
-    setIncomeInput("");
-    setMosrInput("");
-    setLookupHighlight(null);
-    setOnlyShortfallCells(true);
-  };
   const [sortDesc, setSortDesc] = useState<boolean>(true);
   const [hoveredCell, setHoveredCell] = useState<{
     regionName: string;
@@ -3271,30 +3197,44 @@ function InstalledHouseholdsTable({
     };
   }, [isExtended]);
 
-  // Filter rows — when lookup active and onlyShortfallCells is true, only show rows that have shortfall > 0 in the matched cell
+  // Helper to test if a row has a shortfall for the applied slot filter
+  const rowMatchesSlotFilter = (r: InstalledHouseholdsRow) => {
+    if (secFilter === null && mosrFilter === null) return true;
+
+    if (secFilter !== null && mosrFilter !== null) {
+      // Both SEC and MOSR: specific slot must have an active shortfall (target > live)
+      const target = num(r[`sec_${secFilter}_mosr_${mosrFilter}_target`]);
+      const live = num(r[`sec_${secFilter}_mosr_${mosrFilter}`]);
+      return target > 0 && target > live;
+    }
+
+    if (secFilter !== null && mosrFilter === null) {
+      // SEC only: at least one MOSR slot in this SEC has an active shortfall (target > live)
+      return MOSR_LABELS.some((m) => {
+        const target = num(r[`sec_${secFilter}_mosr_${m}_target`]);
+        const live = num(r[`sec_${secFilter}_mosr_${m}`]);
+        return target > 0 && target > live;
+      });
+    }
+
+    if (secFilter === null && mosrFilter !== null) {
+      // MOSR only: at least one SEC has an active shortfall (target > live) for this MOSR
+      return SEC_LABELS.some((s) => {
+        const target = num(r[`sec_${s}_mosr_${mosrFilter}_target`]);
+        const live = num(r[`sec_${s}_mosr_${mosrFilter}`]);
+        return target > 0 && target > live;
+      });
+    }
+
+    return true;
+  };
+
+  // Filter rows — search query filter matching region name, plus slot filter matching shortfall
   const filteredRows = rows.filter((r) => {
     const matchesSearch = r.region_name.toLowerCase().includes(searchQuery.toLowerCase().trim());
     if (!matchesSearch) return false;
-    if (lookupHighlight && onlyShortfallCells) {
-      const shortfall = num(r[`sec_${lookupHighlight.sec}_mosr_${lookupHighlight.mosr}_shortfall`]);
-      return shortfall > 0;
-    }
-    return true;
+    return rowMatchesSlotFilter(r);
   });
-
-  // Count how many regions have shortfall > 0 in the lookup cell (shown in result card)
-  const lookupShortfallRegionCount = useMemo(() => {
-    if (!lookupHighlight) return 0;
-    return rows.filter(
-      (r) => num(r[`sec_${lookupHighlight.sec}_mosr_${lookupHighlight.mosr}_shortfall`]) > 0
-    ).length;
-  }, [lookupHighlight, rows]);
-
-  // Total shortfall in the lookup cell (all regions combined)
-  const lookupCellShortfall = useMemo(() => {
-    if (!lookupHighlight) return null;
-    return num(totalRow[`sec_${lookupHighlight.sec}_mosr_${lookupHighlight.mosr}_shortfall`]);
-  }, [lookupHighlight, totalRow]);
 
   // Sort rows if sortKey is set
   const sortedRows = [...filteredRows].sort((a, b) => {
@@ -3307,6 +3247,61 @@ function InstalledHouseholdsTable({
     const valB = num(b[sortKey]);
     return sortDesc ? valB - valA : valA - valB;
   });
+
+  // Aggregate total row based on active sorted rows
+  const activeTotalRow = useMemo(() => {
+    if (!searchQuery && secFilter === null && mosrFilter === null) {
+      return totalRow;
+    }
+
+    const agg: InstalledHouseholdsTotalRow = {
+      region_name: sortedRows.length === rows.length ? "Total" : `Total (${sortedRows.length} regions)`,
+    };
+    let totalGrandLive = 0;
+    let totalGrandTarget = 0;
+
+    SEC_LABELS.forEach((sec) => {
+      let secLiveTotal = 0;
+      let secTargetTotal = 0;
+
+      MOSR_LABELS.forEach((mosr) => {
+        const key = `sec_${sec}_mosr_${mosr}`;
+        const liveSum = sortedRows.reduce((sum, row) => sum + num(row[key]), 0);
+        const targetSum = sortedRows.reduce((sum, row) => sum + num(row[`${key}_target`]), 0);
+        const shortfallSum = targetSum - liveSum;
+        const metPctSum = targetSum > 0 ? (liveSum / targetSum) * 100 : 100;
+
+        agg[key] = liveSum;
+        agg[`${key}_target`] = targetSum;
+        agg[`${key}_shortfall`] = shortfallSum;
+        agg[`${key}_met_pct`] = metPctSum;
+
+        secLiveTotal += liveSum;
+        secTargetTotal += targetSum;
+      });
+
+      const secShortfallTotal = secTargetTotal - secLiveTotal;
+      const secMetPctTotal = secTargetTotal > 0 ? (secLiveTotal / secTargetTotal) * 100 : 100;
+
+      agg[`sec_${sec}_total`] = secLiveTotal;
+      agg[`sec_${sec}_target`] = secTargetTotal;
+      agg[`sec_${sec}_shortfall`] = secShortfallTotal;
+      agg[`sec_${sec}_met_pct`] = secMetPctTotal;
+
+      totalGrandLive += secLiveTotal;
+      totalGrandTarget += secTargetTotal;
+    });
+
+    agg.grand_total = totalGrandLive;
+    agg.grand_target = totalGrandTarget;
+    agg.grand_shortfall = totalGrandTarget - totalGrandLive;
+    agg.grand_met_pct = totalGrandTarget > 0 ? (totalGrandLive / totalGrandTarget) * 100 : 100;
+
+    agg.region_live = totalGrandLive;
+    agg.region_target = totalGrandTarget;
+
+    return agg;
+  }, [sortedRows, rows.length, totalRow, searchQuery, secFilter, mosrFilter]);
 
   const toggleSort = (key: string) => {
     if (sortKey === key) {
@@ -3396,76 +3391,170 @@ function InstalledHouseholdsTable({
   // Copy as TSV (Tab Separated Values) for perfect pasting into Microsoft Excel / Google Sheets
   const handleCopyTSV = () => {
     const lines: string[] = [];
-    lines.push("Installed Households (Target, Live, Shortfall)");
 
-    // Header 1: SEC groups
-    const h1 = ["SEC"];
-    SEC_LABELS.forEach((sec) => {
-      MOSR_LABELS.forEach(() => {
-        h1.push(String(sec), "", "");
+    if (matrixView === "target") {
+      lines.push("Target Quota Matrix");
+      const h1 = ["SEC"];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach(() => h1.push(String(sec)));
+        h1.push(`${sec} Total`);
       });
-      h1.push(`${sec} Total`, "", "");
-    });
-    h1.push("Grand Total", "", "");
-    lines.push(h1.join("\t"));
+      h1.push("Grand Total");
+      lines.push(h1.join("\t"));
 
-    // Header 2: MOSR numbers
-    const h2 = ["Region/MOSR"];
-    SEC_LABELS.forEach(() => {
-      MOSR_LABELS.forEach((m) => {
-        h2.push(String(m), "", "");
+      const h2 = ["Region/MOSR"];
+      SEC_LABELS.forEach(() => {
+        MOSR_LABELS.forEach((m) => h2.push(String(m)));
+        h2.push("");
+      });
+      h2.push("");
+      lines.push(h2.join("\t"));
+
+      sortedRows.forEach((row) => {
+        const parts = [row.region_name];
+        SEC_LABELS.forEach((sec) => {
+          MOSR_LABELS.forEach((mosr) => {
+            parts.push(String(num(row[`sec_${sec}_mosr_${mosr}_target`])));
+          });
+          parts.push(String(num(row[`sec_${sec}_target`])));
+        });
+        parts.push(String(num(row.grand_target)));
+        lines.push(parts.join("\t"));
+      });
+
+      const totalParts = [activeTotalRow.region_name || "Total"];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach((mosr) => {
+          totalParts.push(String(num(activeTotalRow[`sec_${sec}_mosr_${mosr}_target`])));
+        });
+        totalParts.push(String(num(activeTotalRow[`sec_${sec}_target`])));
+      });
+      totalParts.push(String(num(activeTotalRow.grand_target)));
+      lines.push(totalParts.join("\t"));
+    } else if (matrixView === "fulfillment") {
+      lines.push("Household Fulfillment % Matrix");
+      const h1 = ["SEC"];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach(() => h1.push(String(sec)));
+        h1.push(`${sec} Total`);
+      });
+      h1.push("Grand Total");
+      lines.push(h1.join("\t"));
+
+      const h2 = ["Region/MOSR"];
+      SEC_LABELS.forEach(() => {
+        MOSR_LABELS.forEach((m) => h2.push(String(m)));
+        h2.push("");
+      });
+      h2.push("");
+      lines.push(h2.join("\t"));
+
+      sortedRows.forEach((row) => {
+        const parts = [row.region_name];
+        SEC_LABELS.forEach((sec) => {
+          MOSR_LABELS.forEach((mosr) => {
+            const t = num(row[`sec_${sec}_mosr_${mosr}_target`]);
+            const l = num(row[`sec_${sec}_mosr_${mosr}`]);
+            parts.push(t > 0 ? `${((l / t) * 100).toFixed(0)}%` : "—");
+          });
+          const st = num(row[`sec_${sec}_target`]);
+          const sl = num(row[`sec_${sec}_total`]);
+          parts.push(st > 0 ? `${((sl / st) * 100).toFixed(0)}%` : "—");
+        });
+        const gt = num(row.grand_target);
+        const gl = num(row.grand_total);
+        parts.push(gt > 0 ? `${((gl / gt) * 100).toFixed(0)}%` : "—");
+        lines.push(parts.join("\t"));
+      });
+
+      const totalParts = [activeTotalRow.region_name || "Total"];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach((mosr) => {
+          const t = num(activeTotalRow[`sec_${sec}_mosr_${mosr}_target`]);
+          const l = num(activeTotalRow[`sec_${sec}_mosr_${mosr}`]);
+          totalParts.push(t > 0 ? `${((l / t) * 100).toFixed(0)}%` : "—");
+        });
+        const st = num(activeTotalRow[`sec_${sec}_target`]);
+        const sl = num(activeTotalRow[`sec_${sec}_total`]);
+        totalParts.push(st > 0 ? `${((sl / st) * 100).toFixed(0)}%` : "—");
+      });
+      const gt = num(activeTotalRow.grand_target);
+      const gl = num(activeTotalRow.grand_total);
+      totalParts.push(gt > 0 ? `${((gl / gt) * 100).toFixed(0)}%` : "—");
+      lines.push(totalParts.join("\t"));
+    } else {
+      // Default: installed_shortfall
+      lines.push("Installed Households (Target, Live, Shortfall)");
+
+      // Header 1: SEC groups
+      const h1 = ["SEC"];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach(() => {
+          h1.push(String(sec), "", "");
+        });
+        h1.push(`${sec} Total`, "", "");
+      });
+      h1.push("Grand Total", "", "");
+      lines.push(h1.join("\t"));
+
+      // Header 2: MOSR numbers
+      const h2 = ["Region/MOSR"];
+      SEC_LABELS.forEach(() => {
+        MOSR_LABELS.forEach((m) => {
+          h2.push(String(m), "", "");
+        });
+        h2.push("", "", "");
       });
       h2.push("", "", "");
-    });
-    h2.push("", "", "");
-    lines.push(h2.join("\t"));
+      lines.push(h2.join("\t"));
 
-    // Header 3: Tgt, Live, Short
-    const h3 = [""];
-    SEC_LABELS.forEach(() => {
-      MOSR_LABELS.forEach(() => {
+      // Header 3: Tgt, Live, Short
+      const h3 = [""];
+      SEC_LABELS.forEach(() => {
+        MOSR_LABELS.forEach(() => {
+          h3.push("Tgt", "Live", "Short");
+        });
         h3.push("Tgt", "Live", "Short");
       });
       h3.push("Tgt", "Live", "Short");
-    });
-    h3.push("Tgt", "Live", "Short");
-    lines.push(h3.join("\t"));
+      lines.push(h3.join("\t"));
 
-    // Data rows
-    sortedRows.forEach((row) => {
-      const parts = [row.region_name];
+      // Data rows
+      sortedRows.forEach((row) => {
+        const parts = [row.region_name];
+        SEC_LABELS.forEach((sec) => {
+          MOSR_LABELS.forEach((mosr) => {
+            const t = num(row[`sec_${sec}_mosr_${mosr}_target`]);
+            const l = num(row[`sec_${sec}_mosr_${mosr}`]);
+            parts.push(t === 0 ? "—" : String(t), String(l), exportShortfall(t, l));
+          });
+          const st = num(row[`sec_${sec}_target`]);
+          const sl = num(row[`sec_${sec}_total`]);
+          parts.push(st === 0 ? "—" : String(st), String(sl), exportShortfall(st, sl));
+        });
+        const gt = num(row.grand_target);
+        const gl = num(row.grand_total);
+        parts.push(gt === 0 ? "—" : String(gt), String(gl), exportShortfall(gt, gl));
+        lines.push(parts.join("\t"));
+      });
+
+      // Total row
+      const totalParts = [activeTotalRow.region_name || "Total"];
       SEC_LABELS.forEach((sec) => {
         MOSR_LABELS.forEach((mosr) => {
-          const t = num(row[`sec_${sec}_mosr_${mosr}_target`]);
-          const l = num(row[`sec_${sec}_mosr_${mosr}`]);
-          parts.push(t === 0 ? "—" : String(t), String(l), exportShortfall(t, l));
+          const t = num(activeTotalRow[`sec_${sec}_mosr_${mosr}_target`]);
+          const l = num(activeTotalRow[`sec_${sec}_mosr_${mosr}`]);
+          totalParts.push(t === 0 ? "—" : String(t), String(l), exportShortfall(t, l));
         });
-        const st = num(row[`sec_${sec}_target`]);
-        const sl = num(row[`sec_${sec}_total`]);
-        parts.push(st === 0 ? "—" : String(st), String(sl), exportShortfall(st, sl));
+        const st = num(activeTotalRow[`sec_${sec}_target`]);
+        const sl = num(activeTotalRow[`sec_${sec}_total`]);
+        totalParts.push(st === 0 ? "—" : String(st), String(sl), exportShortfall(st, sl));
       });
-      const gt = num(row.grand_target);
-      const gl = num(row.grand_total);
-      parts.push(gt === 0 ? "—" : String(gt), String(gl), exportShortfall(gt, gl));
-      lines.push(parts.join("\t"));
-    });
-
-    // Total row
-    const totalParts = ["Total"];
-    SEC_LABELS.forEach((sec) => {
-      MOSR_LABELS.forEach((mosr) => {
-        const t = num(totalRow[`sec_${sec}_mosr_${mosr}_target`]);
-        const l = num(totalRow[`sec_${sec}_mosr_${mosr}`]);
-        totalParts.push(t === 0 ? "—" : String(t), String(l), exportShortfall(t, l));
-      });
-      const st = num(totalRow[`sec_${sec}_target`]);
-      const sl = num(totalRow[`sec_${sec}_total`]);
-      totalParts.push(st === 0 ? "—" : String(st), String(sl), exportShortfall(st, sl));
-    });
-    const gt = num(totalRow.grand_target);
-    const gl = num(totalRow.grand_total);
-    totalParts.push(gt === 0 ? "—" : String(gt), String(gl), exportShortfall(gt, gl));
-    lines.push(totalParts.join("\t"));
+      const gt = num(activeTotalRow.grand_target);
+      const gl = num(activeTotalRow.grand_total);
+      totalParts.push(gt === 0 ? "—" : String(gt), String(gl), exportShortfall(gt, gl));
+      lines.push(totalParts.join("\t"));
+    }
 
     navigator.clipboard.writeText(lines.join("\n"));
     setCopied(true);
@@ -3475,81 +3564,177 @@ function InstalledHouseholdsTable({
   // Export as CSV file
   const handleExportCSV = () => {
     const lines: string[] = [];
-    lines.push('"Installed Households (Target, Live, Shortfall)"');
 
-    const h1 = ['"SEC"'];
-    SEC_LABELS.forEach((sec) => {
-      MOSR_LABELS.forEach(() => {
-        h1.push(`"${sec}"`, '""', '""');
+    if (matrixView === "target") {
+      lines.push('"Target Quota Matrix"');
+      const h1 = ['"SEC"'];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach(() => h1.push(`"${sec}"`));
+        h1.push(`"${sec} Total"`);
       });
-      h1.push(`"${sec} Total"`, '""', '""');
-    });
-    h1.push('"Grand Total"', '""', '""');
-    lines.push(h1.join(","));
+      h1.push('"Grand Total"');
+      lines.push(h1.join(","));
 
-    const h2 = ['"Region/MOSR"'];
-    SEC_LABELS.forEach(() => {
-      MOSR_LABELS.forEach((m) => {
-        h2.push(`"${m}"`, '""', '""');
+      const h2 = ['"Region/MOSR"'];
+      SEC_LABELS.forEach(() => {
+        MOSR_LABELS.forEach((m) => h2.push(`"${m}"`));
+        h2.push('""');
+      });
+      h2.push('""');
+      lines.push(h2.join(","));
+
+      sortedRows.forEach((row) => {
+        const parts = [`"${row.region_name}"`];
+        SEC_LABELS.forEach((sec) => {
+          MOSR_LABELS.forEach((mosr) => {
+            parts.push(`"${num(row[`sec_${sec}_mosr_${mosr}_target`])}"`);
+          });
+          parts.push(`"${num(row[`sec_${sec}_target`])}"`);
+        });
+        parts.push(`"${num(row.grand_target)}"`);
+        lines.push(parts.join(","));
+      });
+
+      const totalParts = ['"Total"'];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach((mosr) => {
+          totalParts.push(`"${num(totalRow[`sec_${sec}_mosr_${mosr}_target`])}"`);
+        });
+        totalParts.push(`"${num(totalRow[`sec_${sec}_target`])}"`);
+      });
+      totalParts.push(`"${num(totalRow.grand_target)}"`);
+      lines.push(totalParts.join(","));
+    } else if (matrixView === "fulfillment") {
+      lines.push('"Household Fulfillment % Matrix"');
+      const h1 = ['"SEC"'];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach(() => h1.push(`"${sec}"`));
+        h1.push(`"${sec} Total"`);
+      });
+      h1.push('"Grand Total"');
+      lines.push(h1.join(","));
+
+      const h2 = ['"Region/MOSR"'];
+      SEC_LABELS.forEach(() => {
+        MOSR_LABELS.forEach((m) => h2.push(`"${m}"`));
+        h2.push('""');
+      });
+      h2.push('""');
+      lines.push(h2.join(","));
+
+      sortedRows.forEach((row) => {
+        const parts = [`"${row.region_name}"`];
+        SEC_LABELS.forEach((sec) => {
+          MOSR_LABELS.forEach((mosr) => {
+            const t = num(row[`sec_${sec}_mosr_${mosr}_target`]);
+            const l = num(row[`sec_${sec}_mosr_${mosr}`]);
+            parts.push(`"${t > 0 ? ((l / t) * 100).toFixed(0) + "%" : "—"}"`);
+          });
+          const st = num(row[`sec_${sec}_target`]);
+          const sl = num(row[`sec_${sec}_total`]);
+          parts.push(`"${st > 0 ? ((sl / st) * 100).toFixed(0) + "%" : "—"}"`);
+        });
+        const gt = num(row.grand_target);
+        const gl = num(row.grand_total);
+        parts.push(`"${gt > 0 ? ((gl / gt) * 100).toFixed(0) + "%" : "—"}"`);
+        lines.push(parts.join(","));
+      });
+
+      const totalParts = [`"${activeTotalRow.region_name || "Total"}"`];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach((mosr) => {
+          const t = num(activeTotalRow[`sec_${sec}_mosr_${mosr}_target`]);
+          const l = num(activeTotalRow[`sec_${sec}_mosr_${mosr}`]);
+          totalParts.push(`"${t > 0 ? ((l / t) * 100).toFixed(0) + "%" : "—"}"`);
+        });
+        const st = num(activeTotalRow[`sec_${sec}_target`]);
+        const sl = num(activeTotalRow[`sec_${sec}_total`]);
+        totalParts.push(`"${st > 0 ? ((sl / st) * 100).toFixed(0) + "%" : "—"}"`);
+      });
+      const gt = num(activeTotalRow.grand_target);
+      const gl = num(activeTotalRow.grand_total);
+      totalParts.push(`"${gt > 0 ? ((gl / gt) * 100).toFixed(0) + "%" : "—"}"`);
+      lines.push(totalParts.join(","));
+    } else {
+      // Default: installed_shortfall
+      lines.push('"Installed Households (Target, Live, Shortfall)"');
+
+      const h1 = ['"SEC"'];
+      SEC_LABELS.forEach((sec) => {
+        MOSR_LABELS.forEach(() => {
+          h1.push(`"${sec}"`, '""', '""');
+        });
+        h1.push(`"${sec} Total"`, '""', '""');
+      });
+      h1.push('"Grand Total"', '""', '""');
+      lines.push(h1.join(","));
+
+      const h2 = ['"Region/MOSR"'];
+      SEC_LABELS.forEach(() => {
+        MOSR_LABELS.forEach((m) => {
+          h2.push(`"${m}"`, '""', '""');
+        });
+        h2.push('""', '""', '""');
       });
       h2.push('""', '""', '""');
-    });
-    h2.push('""', '""', '""');
-    lines.push(h2.join(","));
+      lines.push(h2.join(","));
 
-    const h3 = ['""'];
-    SEC_LABELS.forEach(() => {
-      MOSR_LABELS.forEach(() => {
+      const h3 = ['""'];
+      SEC_LABELS.forEach(() => {
+        MOSR_LABELS.forEach(() => {
+          h3.push('"Tgt"', '"Live"', '"Short"');
+        });
         h3.push('"Tgt"', '"Live"', '"Short"');
       });
       h3.push('"Tgt"', '"Live"', '"Short"');
-    });
-    h3.push('"Tgt"', '"Live"', '"Short"');
-    lines.push(h3.join(","));
+      lines.push(h3.join(","));
 
-    sortedRows.forEach((row) => {
-      const parts = [`"${row.region_name}"`];
+      sortedRows.forEach((row) => {
+        const parts = [`"${row.region_name}"`];
+        SEC_LABELS.forEach((sec) => {
+          MOSR_LABELS.forEach((mosr) => {
+            const t = num(row[`sec_${sec}_mosr_${mosr}_target`]);
+            const l = num(row[`sec_${sec}_mosr_${mosr}`]);
+            parts.push(`"${t === 0 ? "—" : t}"`, `"${l}"`, `"${exportShortfall(t, l)}"`);
+          });
+          const st = num(row[`sec_${sec}_target`]);
+          const sl = num(row[`sec_${sec}_total`]);
+          parts.push(`"${st === 0 ? "—" : st}"`, `"${sl}"`, `"${exportShortfall(st, sl)}"`);
+        });
+        const gt = num(row.grand_target);
+        const gl = num(row.grand_total);
+        parts.push(`"${gt === 0 ? "—" : gt}"`, `"${gl}"`, `"${exportShortfall(gt, gl)}"`);
+        lines.push(parts.join(","));
+      });
+
+      const totalParts = [`"${activeTotalRow.region_name || "Total"}"`];
       SEC_LABELS.forEach((sec) => {
         MOSR_LABELS.forEach((mosr) => {
-          const t = num(row[`sec_${sec}_mosr_${mosr}_target`]);
-          const l = num(row[`sec_${sec}_mosr_${mosr}`]);
-          parts.push(`"${t === 0 ? "—" : t}"`, `"${l}"`, `"${exportShortfall(t, l)}"`);
+          const t = num(activeTotalRow[`sec_${sec}_mosr_${mosr}_target`]);
+          const l = num(activeTotalRow[`sec_${sec}_mosr_${mosr}`]);
+          totalParts.push(`"${t === 0 ? "—" : t}"`, `"${l}"`, `"${exportShortfall(t, l)}"`);
         });
-        const st = num(row[`sec_${sec}_target`]);
-        const sl = num(row[`sec_${sec}_total`]);
-        parts.push(`"${st === 0 ? "—" : st}"`, `"${sl}"`, `"${exportShortfall(st, sl)}"`);
+        const st = num(activeTotalRow[`sec_${sec}_target`]);
+        const sl = num(activeTotalRow[`sec_${sec}_total`]);
+        totalParts.push(`"${st === 0 ? "—" : st}"`, `"${sl}"`, `"${exportShortfall(st, sl)}"`);
       });
-      const gt = num(row.grand_target);
-      const gl = num(row.grand_total);
-      parts.push(`"${gt === 0 ? "—" : gt}"`, `"${gl}"`, `"${exportShortfall(gt, gl)}"`);
-      lines.push(parts.join(","));
-    });
-
-    const totalParts = ['"Total"'];
-    SEC_LABELS.forEach((sec) => {
-      MOSR_LABELS.forEach((mosr) => {
-        const t = num(totalRow[`sec_${sec}_mosr_${mosr}_target`]);
-        const l = num(totalRow[`sec_${sec}_mosr_${mosr}`]);
-        totalParts.push(`"${t === 0 ? "—" : t}"`, `"${l}"`, `"${exportShortfall(t, l)}"`);
-      });
-      const st = num(totalRow[`sec_${sec}_target`]);
-      const sl = num(totalRow[`sec_${sec}_total`]);
-      totalParts.push(`"${st === 0 ? "—" : st}"`, `"${sl}"`, `"${exportShortfall(st, sl)}"`);
-    });
-    const gt = num(totalRow.grand_target);
-    const gl = num(totalRow.grand_total);
-    totalParts.push(`"${gt === 0 ? "—" : gt}"`, `"${gl}"`, `"${exportShortfall(gt, gl)}"`);
-    lines.push(totalParts.join(","));
+      const gt = num(activeTotalRow.grand_target);
+      const gl = num(activeTotalRow.grand_total);
+      totalParts.push(`"${gt === 0 ? "—" : gt}"`, `"${gl}"`, `"${exportShortfall(gt, gl)}"`);
+      lines.push(totalParts.join(","));
+    }
 
     const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `installed_households_matrix.csv`);
+    link.setAttribute("download", `installed_households_matrix_${matrixView}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
+
+  const isTripletView = matrixView === "installed_shortfall";
 
   return (
     <>
@@ -3583,330 +3768,196 @@ function InstalledHouseholdsTable({
           </div>
         )}
 
-        {/* 0. Household Classifier — SEC Income & MOSR Lookup */}
-        <div className="border-b bg-gradient-to-r from-indigo-50/70 via-background to-indigo-50/40 dark:from-indigo-950/30 dark:via-background dark:to-indigo-950/20 p-4 shrink-0">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300">
-              <Filter className="size-4" />
-            </div>
-            <div>
-              <span className="text-sm font-semibold text-foreground">Household Classifier — Find Your Cell</span>
-              <p className="text-[11px] text-muted-foreground">
-                Enter a household&#39;s monthly income (AMD) to resolve SEC group, then pick MOSR to pinpoint its panel slot.
-              </p>
-            </div>
+        {/* Top Header Row 1: Title & Tabs (Matching Regional Allocation Matrix Design) */}
+        <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between border-b bg-background shrink-0">
+          <div>
+            <h3 className="text-sm md:text-base font-bold text-foreground tracking-tight">
+              Regional Allocation &amp; Quota Matrix
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Cross-tabulation of regional targets, live production households, and slot shortfalls by SEC (1–3) &times; MOSR (1–4).
+            </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3">
-            {/* SEC via Income input */}
-            <div className="flex flex-col gap-1 flex-1 min-w-0">
-              <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Monthly Income (AMD)
-              </label>
-              <div className="relative">
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-medium select-none">&#x20BE;</span>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="e.g. 300000"
-                  value={incomeInput}
-                  onChange={(e) => setIncomeInput(e.target.value.replace(/[^0-9]/g, ""))}
-                  className={`h-9 pl-7 text-sm font-mono bg-background transition-all ${
-                    resolvedSec === 1
-                      ? "border-emerald-400 ring-1 ring-emerald-300 dark:border-emerald-600"
-                      : resolvedSec === 2
-                      ? "border-blue-400 ring-1 ring-blue-300 dark:border-blue-600"
-                      : resolvedSec === 3
-                      ? "border-amber-400 ring-1 ring-amber-300 dark:border-amber-600"
-                      : ""
+          <div className="inline-flex items-center rounded-lg border border-slate-200/80 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-900/80 p-0.5 text-xs shrink-0 self-start sm:self-center">
+            <button
+              type="button"
+              onClick={() => setMatrixView("installed_shortfall")}
+              className={`px-3 py-1 rounded-md transition-all ${
+                matrixView === "installed_shortfall"
+                  ? "bg-white dark:bg-slate-800 text-foreground font-semibold shadow-xs border border-slate-200/80 dark:border-slate-700"
+                  : "text-muted-foreground hover:text-foreground font-medium"
+              }`}
+            >
+              Installed &amp; Shortfall
+            </button>
+            <button
+              type="button"
+              onClick={() => setMatrixView("target")}
+              className={`px-3 py-1 rounded-md transition-all ${
+                matrixView === "target"
+                  ? "bg-white dark:bg-slate-800 text-foreground font-semibold shadow-xs border border-slate-200/80 dark:border-slate-700"
+                  : "text-muted-foreground hover:text-foreground font-medium"
+              }`}
+            >
+              Target Quota
+            </button>
+            <button
+              type="button"
+              onClick={() => setMatrixView("fulfillment")}
+              className={`px-3 py-1 rounded-md transition-all ${
+                matrixView === "fulfillment"
+                  ? "bg-white dark:bg-slate-800 text-foreground font-semibold shadow-xs border border-slate-200/80 dark:border-slate-700"
+                  : "text-muted-foreground hover:text-foreground font-medium"
+              }`}
+            >
+              Fulfillment %
+            </button>
+          </div>
+        </div>
+
+        {/* Top Header Row 2: Slot Filter, Search & Action Buttons */}
+        <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between border-b bg-background text-xs shrink-0">
+          {/* Left: Slot filter */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <Filter className="size-3.5 text-slate-500" />
+              <span className="font-semibold text-slate-700 dark:text-slate-300">Slot filter:</span>
+            </div>
+
+            {/* SEC buttons */}
+            <div className="inline-flex items-center rounded-lg border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 p-0.5">
+              {[1, 2, 3].map((s) => (
+                <button
+                  key={`sec-btn-${s}`}
+                  type="button"
+                  onClick={() => setSecFilter(secFilter === s ? null : s)}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-all ${
+                    secFilter === s
+                      ? "bg-white dark:bg-slate-800 text-foreground font-bold shadow-xs border border-slate-200/80 dark:border-slate-700"
+                      : "font-medium text-slate-600 dark:text-slate-400 hover:text-foreground"
                   }`}
-                />
+                >
+                  SEC {s}
+                </button>
+              ))}
+            </div>
+
+            {/* MOSR buttons */}
+            <div className="inline-flex items-center rounded-lg border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 p-0.5">
+              {[1, 2, 3, 4].map((m) => (
+                <button
+                  key={`mosr-btn-${m}`}
+                  type="button"
+                  onClick={() => setMosrFilter(mosrFilter === m ? null : m)}
+                  className={`px-2 py-1 text-xs rounded-md transition-all ${
+                    mosrFilter === m
+                      ? "bg-white dark:bg-slate-800 text-foreground font-bold shadow-xs border border-slate-200/80 dark:border-slate-700"
+                      : "font-medium text-slate-600 dark:text-slate-400 hover:text-foreground"
+                  }`}
+                >
+                  M{m}
+                </button>
+              ))}
+            </div>
+
+            {/* Reset button & shortfall count if filter active */}
+            {(secFilter !== null || mosrFilter !== null) && (
+              <div className="flex items-center gap-1.5 ml-1">
+                <span className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 px-2 py-0.5 rounded-full border border-rose-200 dark:border-rose-900">
+                  {sortedRows.length} region{sortedRows.length !== 1 ? "s" : ""} with shortfall
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSecFilter(null);
+                    setMosrFilter(null);
+                  }}
+                  className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5 transition-colors cursor-pointer"
+                  title="Reset slot filter"
+                >
+                  <X className="size-3" />
+                  <span>Reset</span>
+                </button>
               </div>
-              {incomeInput ? (
-                <div className="text-[11px] flex items-center gap-1.5 mt-0.5">
-                  {resolvedSec ? (
-                    <>
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold border ${
-                        resolvedSec === 1
-                          ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800"
-                          : resolvedSec === 2
-                          ? "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800"
-                          : "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800"
-                      }`}>
-                        ✓ SEC {resolvedSec}
-                      </span>
-                      <span className="text-muted-foreground">{activeBracket?.range}</span>
-                    </>
-                  ) : (
-                    <span className="text-rose-500 font-medium">Invalid — enter a positive number</span>
-                  )}
-                </div>
+            )}
+          </div>
+
+          {/* Right: Search, Copy TSV, CSV, Extended */}
+          <div className="flex items-center gap-2">
+            <div className="relative w-40 md:w-48">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Filter region..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-8 pl-8 text-xs bg-background rounded-lg border-slate-200 dark:border-slate-800"
+              />
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleCopyTSV}
+              className="h-8 gap-1.5 text-xs rounded-lg border-slate-200 dark:border-slate-800"
+              title="Copy as TSV to paste directly into Microsoft Excel or Google Sheets"
+            >
+              {copied ? (
+                <>
+                  <Check className="size-3.5 text-emerald-600" />
+                  <span>Copied!</span>
+                </>
               ) : (
-                <div className="text-[11px] text-muted-foreground/70 mt-0.5">
-                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">SEC 1</span> ≥ &#x20BE;500k &nbsp;&middot;&nbsp;
-                  <span className="font-semibold text-blue-600 dark:text-blue-400">SEC 2</span> &#x20BE;200k–499k &nbsp;&middot;&nbsp;
-                  <span className="font-semibold text-amber-600 dark:text-amber-400">SEC 3</span> &lt; &#x20BE;200k
-                </div>
+                <>
+                  <Copy className="size-3.5 text-slate-600 dark:text-slate-400" />
+                  <span>Copy TSV</span>
+                </>
               )}
-            </div>
+            </Button>
 
-            {/* MOSR selector */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                MOSR (1–4)
-              </label>
-              <div className="flex items-center gap-1">
-                {[1, 2, 3, 4].map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setMosrInput(mosrInput === String(m) ? "" : String(m))}
-                    className={`h-9 w-9 rounded-lg border text-sm font-bold transition-all ${
-                      mosrInput === String(m)
-                        ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
-                        : "bg-background text-muted-foreground hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
-                    }`}
-                    title={`Select MOSR ${m}`}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-              {mosrInput && (
-                <div className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium mt-0.5">
-                  MOSR {mosrInput} selected
-                </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleExportCSV}
+              className="h-8 gap-1.5 text-xs rounded-lg border-slate-200 dark:border-slate-800"
+              title="Download CSV spreadsheet"
+            >
+              <Download className="size-3.5 text-slate-600 dark:text-slate-400" />
+              <span>CSV</span>
+            </Button>
+
+            {/* Extended View Toggle */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsExtended(!isExtended)}
+              className={`h-8 gap-1.5 text-xs rounded-lg border-slate-200 dark:border-slate-800 ${
+                isExtended ? "bg-slate-100 dark:bg-slate-800 font-semibold" : ""
+              }`}
+              title={
+                isExtended
+                  ? "Exit Extended View (Esc)"
+                  : "Expand table into full-screen extended view"
+              }
+            >
+              {isExtended ? (
+                <>
+                  <Minimize2 className="size-3.5" />
+                  <span>Exit Extended</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="size-3.5 text-slate-600 dark:text-slate-400" />
+                  <span>Extended</span>
+                </>
               )}
-            </div>
-
-            {/* Result card */}
-            {resolvedSec && resolvedMosr ? (
-              <div className={`flex-1 min-w-0 rounded-xl border-2 p-3 text-xs transition-all animate-in fade-in duration-200 ${
-                (lookupCellShortfall ?? 0) > 0
-                  ? "border-rose-300 bg-rose-50/80 dark:bg-rose-950/30 dark:border-rose-700"
-                  : "border-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/30 dark:border-emerald-700"
-              }`}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                    Panel Slot Result
-                  </span>
-                  {(lookupCellShortfall ?? 0) > 0 ? (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-900/80 dark:text-rose-200 border border-rose-300 dark:border-rose-700">
-                      Shortfall Active ({lookupShortfallRegionCount} Region{lookupShortfallRegionCount !== 1 ? "s" : ""})
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/80 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700">
-                      ✓ Quota Fulfilled (0 Shortfall)
-                    </span>
-                  )}
-                </div>
-                <div className="font-bold text-base text-foreground leading-tight">
-                  SEC {resolvedSec} &times; MOSR {resolvedMosr}
-                </div>
-                <div className="text-muted-foreground mt-0.5 text-[11px]">{activeBracket?.desc}</div>
-
-                {(lookupCellShortfall ?? 0) > 0 ? (
-                  <>
-                    <div className="mt-2.5 pt-2 border-t border-rose-200 dark:border-rose-800/60 flex flex-wrap items-center gap-x-4 gap-y-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-muted-foreground text-[11px]">Total Shortfall:</span>
-                        <span className="font-extrabold text-sm text-rose-600 dark:text-rose-400">
-                          {lookupCellShortfall} households
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-muted-foreground text-[11px]">Regions needing this profile:</span>
-                        <span className="font-bold text-xs text-rose-700 dark:text-rose-300">
-                          {lookupShortfallRegionCount} region{lookupShortfallRegionCount !== 1 ? "s" : ""}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-[11px] text-rose-700 dark:text-rose-300 font-semibold">
-                        &#8595; Table shows only cells with active shortfall
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setOnlyShortfallCells(!onlyShortfallCells)}
-                        className="text-[11px] font-medium underline text-primary hover:opacity-80"
-                      >
-                        {onlyShortfallCells ? "View all matrix cells" : "View shortfall cells only"}
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <p className="mt-2 text-[11px] text-emerald-800 dark:text-emerald-300 font-medium pt-1 border-t border-emerald-200 dark:border-emerald-800/60">
-                    All regions have fully met their quota for SEC {resolvedSec} &times; MOSR {resolvedMosr}. There is no shortfall for this household type.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="flex-1 min-w-0 rounded-xl border border-dashed border-border p-3 text-xs text-muted-foreground items-center justify-center min-h-[76px] hidden sm:flex">
-                Fill both fields to pinpoint a panel slot and show shortfall cells
-              </div>
-            )}
-
-            {/* Clear button */}
-            {(incomeInput || mosrInput) && (
-              <button
-                type="button"
-                onClick={clearLookup}
-                className="h-9 px-3 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:border-foreground/50 transition-colors shrink-0 flex items-center gap-1 self-start sm:self-center mt-5 sm:mt-0"
-                title="Clear lookup"
-              >
-                <X className="size-3.5" />
-                Clear
-              </button>
-            )}
+            </Button>
           </div>
         </div>
-
-        {/* 1. Creative Executive Insights Strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-3.5 bg-gradient-to-r from-muted/50 via-muted/20 to-muted/50 border-b text-xs shrink-0">
-        <div className="flex items-center gap-2.5 rounded-lg border bg-background/80 p-2.5 shadow-2xs">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-            <Building2 className="size-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[10px] text-muted-foreground uppercase font-medium">Top Region</div>
-            <div className="truncate font-semibold text-foreground">
-              {insights.topRegionName} <span className="font-normal text-muted-foreground">({insights.topRegionLive} · {insights.topRegionPct}%)</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2.5 rounded-lg border bg-background/80 p-2.5 shadow-2xs">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-            <Layers className="size-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[10px] text-muted-foreground uppercase font-medium">Dominant SEC</div>
-            <div className="truncate font-semibold text-foreground">
-              SEC {insights.dominantSec} <span className="font-normal text-muted-foreground">({insights.dominantSecTotal} · {insights.dominantSecPct}%)</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2.5 rounded-lg border bg-background/80 p-2.5 shadow-2xs">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300">
-            <Target className="size-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[10px] text-muted-foreground uppercase font-medium">Peak Cluster Cell</div>
-            <div className="truncate font-semibold text-foreground">
-              SEC {insights.peakCellSec} · MOSR {insights.peakCellMosr} <span className="font-normal text-muted-foreground">({insights.peakCellCount} live)</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2.5 rounded-lg border bg-background/80 p-2.5 shadow-2xs">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-            <Sparkles className="size-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[10px] text-muted-foreground uppercase font-medium">Panel Progress</div>
-            <div className="truncate font-semibold text-foreground">
-              {insights.totalLive}/{insights.totalTarget} <span className="font-normal text-emerald-600 dark:text-emerald-400">({insights.metPct}%)</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Top Interactive Toolbar */}
-      <div className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between border-b bg-background shrink-0">
-        {/* Quick Legend for Tgt, Live, Short */}
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-semibold text-foreground">Columns:</span>
-          <span className="inline-flex items-center gap-1 font-mono text-[11px]">
-            <span className="font-semibold text-foreground">Tgt</span> (Target)
-          </span>
-          <span>·</span>
-          <span className="inline-flex items-center gap-1 font-mono text-[11px]">
-            <span className="font-bold text-blue-600 dark:text-blue-400">Live</span> (Active HHs)
-          </span>
-          <span>·</span>
-          <span className="inline-flex items-center gap-1 font-mono text-[11px]">
-            <span className="font-bold text-rose-600 dark:text-rose-400">Short</span> (Shortfall: -X · Extra: +X)
-          </span>
-        </div>
-
-        {/* Right Tools: Filter + Copy + CSV */}
-        <div className="flex items-center gap-2">
-          <div className="relative w-40 md:w-48">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="Filter region..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 pl-8 text-xs bg-background"
-            />
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleCopyTSV}
-            className="h-8 gap-1 text-xs"
-            title="Copy as TSV to paste directly into Microsoft Excel or Google Sheets"
-          >
-            {copied ? (
-              <>
-                <Check className="size-3.5 text-emerald-600" />
-                <span>Copied!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="size-3.5" />
-                <span className="hidden sm:inline">Copy</span>
-              </>
-            )}
-          </Button>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleExportCSV}
-            className="h-8 gap-1 text-xs"
-            title="Download CSV spreadsheet"
-          >
-            <Download className="size-3.5" />
-            <span className="hidden sm:inline">CSV</span>
-          </Button>
-
-          {/* Extended View Toggle */}
-          <Button
-            type="button"
-            variant={isExtended ? "default" : "outline"}
-            size="sm"
-            onClick={() => setIsExtended(!isExtended)}
-            className={`h-8 gap-1.5 text-xs font-medium transition-colors ${
-              isExtended
-                ? "bg-blue-600 hover:bg-blue-700 text-white"
-                : ""
-            }`}
-            title={
-              isExtended
-                ? "Exit Extended View (Esc)"
-                : "Expand table into full-screen extended view"
-            }
-          >
-            {isExtended ? (
-              <>
-                <Minimize2 className="size-3.5" />
-                <span>Exit Extended</span>
-              </>
-            ) : (
-              <>
-                <Maximize2 className="size-3.5" />
-                <span>Extended View</span>
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
 
       {/* 3. Dynamic Interactive Hover Cross-hair Banner */}
       <div className="min-h-[30px] border-b bg-slate-50 dark:bg-slate-900/60 px-4 py-1.5 text-xs text-muted-foreground flex items-center justify-between">
@@ -3945,7 +3996,7 @@ function InstalledHouseholdsTable({
         )}
       </div>
 
-      {/* 4. Exact 17-Column Table Structure */}
+      {/* 4. Matrix Table Structure */}
       <div
         className={`overflow-x-auto ${
           isExtended ? "flex-1 min-h-0 overflow-y-auto" : ""
@@ -3953,20 +4004,24 @@ function InstalledHouseholdsTable({
       >
         <table className="w-full min-w-[1280px] border-collapse text-xs font-sans">
           <thead className={isExtended ? "sticky top-0 z-30 shadow-xs" : undefined}>
-            {/* Title Banner spanning all 49 columns */}
+            {/* Title Banner spanning the full table width */}
             <tr>
               <th
-                colSpan={49}
+                colSpan={isTripletView ? 49 : 17}
                 className="bg-[#4a77bb] dark:bg-blue-900 text-white font-bold py-2.5 px-4 text-center sm:text-right text-sm tracking-wide border border-[#3b66a8] dark:border-blue-800 shadow-inner select-none"
               >
-                Installed Households
+                {matrixView === "target"
+                  ? "Target Quota Matrix"
+                  : matrixView === "fulfillment"
+                  ? "Fulfillment % Matrix"
+                  : "Installed Households"}
               </th>
             </tr>
 
-            {/* Row 1: Region/MOSR (rowSpan=3) | SEC 1 (colSpan=12) | 1 Total (colSpan=3, rowSpan=2) | SEC 2... | Grand Total (colSpan=3, rowSpan=2) */}
+            {/* Row 1: Region/MOSR | SEC 1 | 1 Total | SEC 2... | Grand Total */}
             <tr className="bg-[#dbe8f5] dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold select-none text-center">
               <th
-                rowSpan={3}
+                rowSpan={isTripletView ? 3 : 2}
                 onClick={() => toggleSort("region_name")}
                 className="border border-slate-300 dark:border-slate-700 px-3 py-2 text-left w-40 font-bold bg-[#dbe8f5] dark:bg-slate-800 sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors align-middle"
                 title="Click to sort by Region"
@@ -3978,13 +4033,13 @@ function InstalledHouseholdsTable({
               </th>
 
               {SEC_LABELS.map((sec) => {
-                const isSecMatch = lookupHighlight?.sec === sec;
-                const isDimmed = lookupHighlight && onlyShortfallCells && !isSecMatch;
+                const isSecMatch = secFilter === sec;
+                const isDimmed = secFilter !== null && !isSecMatch;
 
                 return (
                   <Fragment key={`sec-header-group-${sec}`}>
                     <th
-                      colSpan={12}
+                      colSpan={isTripletView ? 12 : 4}
                       className={`border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-bold tracking-wide transition-colors ${
                         isSecMatch
                           ? "bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-100"
@@ -3996,7 +4051,7 @@ function InstalledHouseholdsTable({
                       {sec}{isSecMatch ? " ★" : ""}
                     </th>
                     <th
-                      colSpan={3}
+                      colSpan={isTripletView ? 3 : 1}
                       rowSpan={2}
                       onClick={() => toggleSort(`sec_${sec}_total`)}
                       className={`border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-bold transition-colors cursor-pointer align-middle ${
@@ -4018,7 +4073,7 @@ function InstalledHouseholdsTable({
               })}
 
               <th
-                colSpan={3}
+                colSpan={isTripletView ? 3 : 1}
                 rowSpan={2}
                 onClick={() => toggleSort("grand_total")}
                 className="border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-bold cursor-pointer transition-colors bg-[#bcd2ee] dark:bg-blue-950/80 text-blue-950 dark:text-blue-100 hover:bg-blue-200 dark:hover:bg-blue-900 align-middle"
@@ -4038,14 +4093,17 @@ function InstalledHouseholdsTable({
                   {MOSR_LABELS.map((mosr) => {
                     const colKey = `sec_${sec}_mosr_${mosr}`;
                     const isSorted = sortKey === colKey;
-                    const isMatch = lookupHighlight?.sec === sec && lookupHighlight?.mosr === mosr;
+                    const isSlotMatch =
+                      (secFilter === null || secFilter === sec) &&
+                      (mosrFilter === null || mosrFilter === mosr) &&
+                      (secFilter !== null || mosrFilter !== null);
                     return (
                       <th
                         key={`sec-${sec}-mosr-hdr-${mosr}`}
-                        colSpan={3}
+                        colSpan={isTripletView ? 3 : 1}
                         onClick={() => toggleSort(colKey)}
                         className={`border border-slate-300 dark:border-slate-700 px-1 py-1 text-center font-bold cursor-pointer transition-colors ${
-                          isMatch
+                          isSlotMatch
                             ? "bg-rose-200 text-rose-900 dark:bg-rose-900 dark:text-rose-100 ring-2 ring-inset ring-rose-500"
                             : "bg-[#e8f1fa] dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700"
                         }`}
@@ -4062,59 +4120,67 @@ function InstalledHouseholdsTable({
               ))}
             </tr>
 
-            {/* Row 3: Tgt | Live | Short subheaders under each MOSR, SEC Total, Grand Total */}
-            <tr className="bg-[#f1f6fc] dark:bg-slate-900 text-[11px] font-semibold text-slate-600 dark:text-slate-300 select-none text-center">
-              {SEC_LABELS.map((sec) => (
-                <Fragment key={`sec-triplet-subheaders-${sec}`}>
-                  {MOSR_LABELS.map((mosr) => (
-                    <Fragment key={`sec-${sec}-mosr-${mosr}-sub`}>
-                      <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-11 text-center font-medium">Tgt</th>
-                      <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-11 text-center font-semibold text-blue-700 dark:text-blue-300">Live</th>
-                      <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-11 text-center font-semibold text-rose-700 dark:text-rose-300">Short</th>
-                    </Fragment>
-                  ))}
-                  {/* SEC Total Subheaders */}
-                  <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-medium bg-[#cadcf2]/70 dark:bg-sky-950/40">Tgt</th>
-                  <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-semibold bg-[#cadcf2]/70 dark:bg-sky-950/40 text-blue-800 dark:text-blue-200">Live</th>
-                  <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-semibold bg-[#cadcf2]/70 dark:bg-sky-950/40 text-rose-800 dark:text-rose-200">Short</th>
-                </Fragment>
-              ))}
-              {/* Grand Total Subheaders */}
-              <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-medium bg-[#bcd2ee]/70 dark:bg-blue-950/40">Tgt</th>
-              <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-extrabold bg-[#bcd2ee]/70 dark:bg-blue-950/40 text-blue-900 dark:text-blue-100">Live</th>
-              <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-extrabold bg-[#bcd2ee]/70 dark:bg-blue-950/40 text-rose-900 dark:text-rose-100">Short</th>
-            </tr>
+            {/* Row 3: Tgt | Live | Short subheaders (only rendered in installed_shortfall view) */}
+            {isTripletView && (
+              <tr className="bg-[#f1f6fc] dark:bg-slate-900 text-[11px] font-semibold text-slate-600 dark:text-slate-300 select-none text-center">
+                {SEC_LABELS.map((sec) => (
+                  <Fragment key={`sec-triplet-subheaders-${sec}`}>
+                    {MOSR_LABELS.map((mosr) => (
+                      <Fragment key={`sec-${sec}-mosr-${mosr}-sub`}>
+                        <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-11 text-center font-medium">Tgt</th>
+                        <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-11 text-center font-semibold text-blue-700 dark:text-blue-300">Live</th>
+                        <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-11 text-center font-semibold text-rose-700 dark:text-rose-300">Short</th>
+                      </Fragment>
+                    ))}
+                    {/* SEC Total Subheaders */}
+                    <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-medium bg-[#cadcf2]/70 dark:bg-sky-950/40">Tgt</th>
+                    <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-semibold bg-[#cadcf2]/70 dark:bg-sky-950/40 text-blue-800 dark:text-blue-200">Live</th>
+                    <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-semibold bg-[#cadcf2]/70 dark:bg-sky-950/40 text-rose-800 dark:text-rose-200">Short</th>
+                  </Fragment>
+                ))}
+                {/* Grand Total Subheaders */}
+                <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-medium bg-[#bcd2ee]/70 dark:bg-blue-950/40">Tgt</th>
+                <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-extrabold bg-[#bcd2ee]/70 dark:bg-blue-950/40 text-blue-900 dark:text-blue-100">Live</th>
+                <th className="border border-slate-300 dark:border-slate-700 px-1 py-1 w-12 text-center font-extrabold bg-[#bcd2ee]/70 dark:bg-blue-950/40 text-rose-900 dark:text-rose-100">Short</th>
+              </tr>
+            )}
           </thead>
 
           <tbody>
             {sortedRows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={49}
+                  colSpan={isTripletView ? 49 : 17}
                   className="text-center py-12 text-muted-foreground text-xs"
                 >
-                  {lookupHighlight ? (
-                    <div className="flex flex-col items-center justify-center gap-2 py-4">
-                      <div className="flex size-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                        <Check className="size-5" />
-                      </div>
-                      <span className="text-emerald-700 dark:text-emerald-300 font-bold text-sm">
-                        No Shortfall Found for SEC {lookupHighlight.sec} &times; MOSR {lookupHighlight.mosr}
-                      </span>
-                      <span className="text-muted-foreground text-xs max-w-md text-center">
-                        All regions have fully satisfied or exceeded their quota for this demographic profile.
-                      </span>
-                      <button
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                      {searchQuery
+                        ? `No regions found matching "${searchQuery}"`
+                        : secFilter !== null || mosrFilter !== null
+                        ? `No regions have an active shortfall for the applied filter (${
+                            secFilter !== null ? `SEC ${secFilter}` : ""
+                          }${secFilter !== null && mosrFilter !== null ? " × " : ""}${
+                            mosrFilter !== null ? `M${mosrFilter}` : ""
+                          }). All regional targets are fully met or have no target.`
+                        : "No regions found."}
+                    </span>
+                    {(secFilter !== null || mosrFilter !== null) && (
+                      <Button
                         type="button"
-                        onClick={clearLookup}
-                        className="mt-2 text-xs font-semibold text-primary underline hover:opacity-80"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setSecFilter(null);
+                          setMosrFilter(null);
+                        }}
+                        className="h-7 text-xs gap-1 mt-1"
                       >
-                        Clear search to view all installed households
-                      </button>
-                    </div>
-                  ) : (
-                    <span>No regions found matching &quot;{searchQuery}&quot;</span>
-                  )}
+                        <X className="size-3" />
+                        <span>Reset Slot Filter</span>
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ) : (
@@ -4164,20 +4230,74 @@ function InstalledHouseholdsTable({
                             const targetVal = num(row[`sec_${sec}_mosr_${mosr}_target`]);
                             const sf = formatShortfall(targetVal, liveVal);
                             const metPct = num(row[`sec_${sec}_mosr_${mosr}_met_pct`]);
-                            const colTotal = num(totalRow[`sec_${sec}_mosr_${mosr}`]);
+                            const colTotal = num(activeTotalRow[`sec_${sec}_mosr_${mosr}`]);
 
-                            const isLookupMatch =
-                              lookupHighlight?.sec === sec && lookupHighlight?.mosr === mosr;
+                            const isSlotMatch =
+                              (secFilter === null || secFilter === sec) &&
+                              (mosrFilter === null || mosrFilter === mosr) &&
+                              (secFilter !== null || mosrFilter !== null);
                             const isCellHovered =
                               hoveredCell?.regionName === row.region_name &&
                               hoveredCell?.sec === sec &&
                               hoveredCell?.mosr === mosr;
+                            const isCellShortfall = isSlotMatch && targetVal > 0 && targetVal > liveVal;
 
-                            const highlightClass = isLookupMatch
-                              ? "bg-rose-50/90 dark:bg-rose-950/60 ring-1 ring-rose-400"
+                            const highlightClass = isCellShortfall
+                              ? "bg-rose-100/90 dark:bg-rose-950/70 ring-1 ring-inset ring-rose-500 font-bold"
                               : isCellHovered
                               ? "bg-blue-100/70 dark:bg-blue-900/50"
                               : "";
+
+                            if (matrixView === "target") {
+                              return (
+                                <td
+                                  key={`${row.region_name}-${sec}-${mosr}`}
+                                  onMouseEnter={() =>
+                                    setHoveredCell({
+                                      regionName: row.region_name,
+                                      sec,
+                                      mosr,
+                                      val: liveVal,
+                                      targetVal,
+                                      shortfallVal: targetVal - liveVal,
+                                      metPct,
+                                      regionTotal: rowGrandLive,
+                                      colTotal,
+                                    })
+                                  }
+                                  onMouseLeave={() => setHoveredCell(null)}
+                                  className={`border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-mono tabular-nums ${highlightClass}`}
+                                >
+                                  {targetVal === 0 ? "—" : targetVal}
+                                </td>
+                              );
+                            }
+
+                            if (matrixView === "fulfillment") {
+                              const cellData = getCellValue(row, sec, mosr, "fulfillment");
+                              return (
+                                <td
+                                  key={`${row.region_name}-${sec}-${mosr}`}
+                                  onMouseEnter={() =>
+                                    setHoveredCell({
+                                      regionName: row.region_name,
+                                      sec,
+                                      mosr,
+                                      val: liveVal,
+                                      targetVal,
+                                      shortfallVal: targetVal - liveVal,
+                                      metPct,
+                                      regionTotal: rowGrandLive,
+                                      colTotal,
+                                    })
+                                  }
+                                  onMouseLeave={() => setHoveredCell(null)}
+                                  className={`border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-mono tabular-nums ${cellData.className} ${highlightClass}`}
+                                >
+                                  {cellData.display}
+                                </td>
+                              );
+                            }
 
                             return (
                               <Fragment key={`${row.region_name}-${sec}-${mosr}`}>
@@ -4255,25 +4375,54 @@ function InstalledHouseholdsTable({
                             );
                           })}
 
-                          {/* SEC Group Total Column: Tgt, Live, Short */}
-                          <td className="border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 text-slate-700 dark:text-slate-200 font-medium">
-                            {secTarget === 0 ? "—" : secTarget}
-                          </td>
-                          <td className="border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 text-slate-900 dark:text-slate-100 font-bold">
-                            {secLive}
-                          </td>
-                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 ${secSf.className}`}>
-                            {secSf.display}
-                          </td>
+                          {/* SEC Group Total Column */}
+                          {matrixView === "target" ? (
+                            <td className="border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 text-slate-800 dark:text-slate-100 font-bold">
+                              {secTarget === 0 ? "—" : secTarget}
+                            </td>
+                          ) : matrixView === "fulfillment" ? (
+                            <td className="border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 font-bold">
+                              {getGroupTotalValue(row, sec, "fulfillment").display}
+                            </td>
+                          ) : (
+                            <Fragment>
+                              <td className="border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 text-slate-700 dark:text-slate-200 font-medium">
+                                {secTarget === 0 ? "—" : secTarget}
+                              </td>
+                              <td className="border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 text-slate-900 dark:text-slate-100 font-bold">
+                                {secLive}
+                              </td>
+                              <td className={`border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#cadcf2]/50 dark:bg-sky-950/30 ${secSf.className}`}>
+                                {secSf.display}
+                              </td>
+                            </Fragment>
+                          )}
                         </Fragment>
                       );
                     })}
 
-                    {/* Region Grand Total Columns: Tgt, Live, Short */}
+                    {/* Region Grand Total Columns */}
                     {(() => {
                       const gt = num(row.grand_target);
                       const gl = num(row.grand_total);
                       const gsf = formatShortfall(gt, gl);
+
+                      if (matrixView === "target") {
+                        return (
+                          <td className="border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-mono tabular-nums bg-[#bcd2ee]/60 dark:bg-blue-950/40 text-blue-950 dark:text-blue-100 font-extrabold">
+                            {gt === 0 ? "—" : gt}
+                          </td>
+                        );
+                      }
+
+                      if (matrixView === "fulfillment") {
+                        return (
+                          <td className="border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-center font-mono tabular-nums bg-[#bcd2ee]/60 dark:bg-blue-950/40 text-blue-950 dark:text-blue-100 font-extrabold">
+                            {getGrandTotalValue(row, "fulfillment").display}
+                          </td>
+                        );
+                      }
+
                       return (
                         <>
                           <td className="border border-slate-300 dark:border-slate-700 px-1 py-1.5 text-center font-mono tabular-nums bg-[#bcd2ee]/60 dark:bg-blue-950/40 text-slate-700 dark:text-slate-200 font-medium">
@@ -4296,31 +4445,62 @@ function InstalledHouseholdsTable({
             {/* Total Row */}
             <tr className="bg-[#dbe8f5] dark:bg-slate-800 font-bold border-t-2 border-slate-400 dark:border-slate-600">
               <td className="border border-slate-300 dark:border-slate-700 px-3 py-2 text-left font-bold text-slate-900 dark:text-slate-100 bg-[#dbe8f5] dark:bg-slate-800 sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                Total
+                {activeTotalRow.region_name || "Total"}
               </td>
 
               {SEC_LABELS.map((sec) => {
-                const totalSecTarget = num(totalRow[`sec_${sec}_target`]);
-                const totalSecLive = num(totalRow[`sec_${sec}_total`]);
+                const totalSecTarget = num(activeTotalRow[`sec_${sec}_target`]);
+                const totalSecLive = num(activeTotalRow[`sec_${sec}_total`]);
                 const totalSecSf = formatShortfall(totalSecTarget, totalSecLive);
 
                 return (
                   <Fragment key={`total-sec-${sec}`}>
                     {MOSR_LABELS.map((mosr) => {
-                      const t = num(totalRow[`sec_${sec}_mosr_${mosr}_target`]);
-                      const l = num(totalRow[`sec_${sec}_mosr_${mosr}`]);
+                      const t = num(activeTotalRow[`sec_${sec}_mosr_${mosr}_target`]);
+                      const l = num(activeTotalRow[`sec_${sec}_mosr_${mosr}`]);
                       const sf = formatShortfall(t, l);
-                      const isMatch = lookupHighlight?.sec === sec && lookupHighlight?.mosr === mosr;
+                      const isMatch =
+                        (secFilter === null || secFilter === sec) &&
+                        (mosrFilter === null || mosrFilter === mosr) &&
+                        (secFilter !== null || mosrFilter !== null);
+                      const isTotalShortfall = isMatch && t > 0 && t > l;
+
+                      if (matrixView === "target") {
+                        return (
+                          <td
+                            key={`total-${sec}-${mosr}`}
+                            className={`border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-mono tabular-nums font-bold ${
+                              isMatch ? "bg-rose-100 dark:bg-rose-950 font-bold" : ""
+                            }`}
+                          >
+                            {t === 0 ? "—" : t}
+                          </td>
+                        );
+                      }
+
+                      if (matrixView === "fulfillment") {
+                        const totalCellData = getCellValue(activeTotalRow, sec, mosr, "fulfillment");
+                        return (
+                          <td
+                            key={`total-${sec}-${mosr}`}
+                            className={`border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-mono tabular-nums font-bold ${
+                              totalCellData.className
+                            } ${isMatch ? "bg-rose-100 dark:bg-rose-950" : ""}`}
+                          >
+                            {totalCellData.display}
+                          </td>
+                        );
+                      }
 
                       return (
                         <Fragment key={`total-${sec}-${mosr}`}>
-                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums font-medium ${isMatch ? "bg-rose-100 dark:bg-rose-950" : ""}`}>
+                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums font-medium ${isTotalShortfall ? "bg-rose-100 dark:bg-rose-950" : ""}`}>
                             {t === 0 ? "—" : t}
                           </td>
-                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100 ${isMatch ? "bg-rose-100 dark:bg-rose-950" : ""}`}>
+                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100 ${isTotalShortfall ? "bg-rose-100 dark:bg-rose-950" : ""}`}>
                             {l}
                           </td>
-                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums ${sf.className} ${isMatch ? "bg-rose-100 dark:bg-rose-950" : ""}`}>
+                          <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums ${sf.className} ${isTotalShortfall ? "bg-rose-100 dark:bg-rose-950 font-extrabold" : ""}`}>
                             {sf.display}
                           </td>
                         </Fragment>
@@ -4328,24 +4508,53 @@ function InstalledHouseholdsTable({
                     })}
 
                     {/* SEC Total */}
-                    <td className="border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 font-bold text-slate-800 dark:text-slate-200">
-                      {totalSecTarget === 0 ? "—" : totalSecTarget}
-                    </td>
-                    <td className="border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 font-extrabold text-slate-900 dark:text-slate-100">
-                      {totalSecLive}
-                    </td>
-                    <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 ${totalSecSf.className}`}>
-                      {totalSecSf.display}
-                    </td>
+                    {matrixView === "target" ? (
+                      <td className="border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 font-bold text-slate-800 dark:text-slate-200">
+                        {totalSecTarget === 0 ? "—" : totalSecTarget}
+                      </td>
+                    ) : matrixView === "fulfillment" ? (
+                      <td className="border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 font-bold">
+                        {getGroupTotalValue(activeTotalRow, sec, "fulfillment").display}
+                      </td>
+                    ) : (
+                      <Fragment>
+                        <td className="border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 font-bold text-slate-800 dark:text-slate-200">
+                          {totalSecTarget === 0 ? "—" : totalSecTarget}
+                        </td>
+                        <td className="border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 font-extrabold text-slate-900 dark:text-slate-100">
+                          {totalSecLive}
+                        </td>
+                        <td className={`border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#cadcf2] dark:bg-sky-950 ${totalSecSf.className}`}>
+                          {totalSecSf.display}
+                        </td>
+                      </Fragment>
+                    )}
                   </Fragment>
                 );
               })}
 
               {/* Grand Total Row */}
               {(() => {
-                const totalGt = num(totalRow.grand_target);
-                const totalGl = num(totalRow.grand_total);
+                const totalGt = num(activeTotalRow.grand_target);
+                const totalGl = num(activeTotalRow.grand_total);
                 const totalGsf = formatShortfall(totalGt, totalGl);
+
+                if (matrixView === "target") {
+                  return (
+                    <td className="border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-mono tabular-nums bg-[#bcd2ee] dark:bg-blue-950 font-extrabold text-blue-950 dark:text-blue-50">
+                      {totalGt === 0 ? "—" : totalGt}
+                    </td>
+                  );
+                }
+
+                if (matrixView === "fulfillment") {
+                  return (
+                    <td className="border border-slate-300 dark:border-slate-700 px-2 py-2 text-center font-mono tabular-nums bg-[#bcd2ee] dark:bg-blue-950 font-extrabold text-blue-950 dark:text-blue-50">
+                      {getGrandTotalValue(activeTotalRow, "fulfillment").display}
+                    </td>
+                  );
+                }
+
                 return (
                   <>
                     <td className="border border-slate-300 dark:border-slate-700 px-1 py-2 text-center font-mono tabular-nums bg-[#bcd2ee] dark:bg-blue-950 font-bold text-slate-800 dark:text-slate-200">
